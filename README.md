@@ -14,6 +14,18 @@ parental control system for parents and home-labbers who want real visibility
 and real control of the devices on their LAN — including the modern ones that
 actively try to bypass your DNS server.
 
+<br/>
+
+**Free, forever. Made by a parent, for parents.**
+
+Guardium DNS is a side project from a tech dad whose day job is in the
+networking world. It exists to give families a full-featured, easy-to-use
+way to protect their kids from harmful content online and enforce real
+screen-time rules — bedtime, school hours, no-YouTube during homework,
+total kill-switches when needed — **without** a monthly subscription to a
+cloud filtering service that sees every domain your household ever looks
+up. Everything runs on your own hardware, on your own network.
+
 </div>
 
 ---
@@ -26,6 +38,14 @@ actively try to bypass your DNS server.
 > learn from it, and contribute. APIs, schemas, and UI will change without
 > notice. There is no upgrade path between versions yet. **Use at your own
 > risk on your own network.**
+
+> [!NOTE]
+> **Currently in progress:** UniFi API integration so that self-hosted *and*
+> cloud-controlled UniFi devices (UDM, UDM Pro, Cloud Gateway, Dream Router,
+> UniFi OS Console) can have Guardium DNS protection wired in directly —
+> DHCP DNS handoff, per-client DNS override, and DoH IP blocklists. If you
+> run UniFi and want to help test, [open an issue](../../issues/new) so I
+> can ping you when the first build lands.
 
 This project exists because the author wanted a sane way to:
 
@@ -418,7 +438,22 @@ modern Debian/Ubuntu environment with `apt`.
 
 ### Step 1 — Install Technitium DNS
 
-If you already have a working Technitium server, **skip to Step 2**.
+> [!IMPORTANT]
+> **Use a fresh Technitium DNS install for Guardium.** Guardium writes its
+> own blocking groups, sinkhole rules, app configuration, and Advanced
+> Blocking settings into the Technitium server it's pointed at. If you
+> bolt it onto an existing Technitium deployment that already has hand-
+> tuned groups, custom block lists, or other apps wired up, those changes
+> **can conflict with, overwrite, or break** your existing configuration —
+> and you may see unexpected resolver behaviour as a result.
+>
+> The strongly recommended path is to spin up a **new, dedicated Technitium
+> LXC / VM / container** just for Guardium. If you absolutely must reuse
+> an existing one, back up `/var/lib/technitium-dns-server/` first and be
+> prepared to roll back.
+
+If you already have a **dedicated, Guardium-only** Technitium server, skip
+to Step 2.
 
 The author's recommended path on Proxmox is the
 [community-scripts.org Technitium DNS helper](https://community-scripts.org/scripts/technitiumdns).
