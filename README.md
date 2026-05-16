@@ -39,6 +39,33 @@ If that resonates with you, you're in the right place.
 
 ---
 
+## Hardware & router compatibility
+
+> [!IMPORTANT]
+> **The author has tested Guardium DNS end-to-end on exactly one router: an
+> ASUS RT-BE88U on stock firmware.** Everything else is theoretical. Routers
+> from the same family (AsusWRT, Asuswrt-Merlin) are *expected* to work
+> because they share the underlying NVRAM keys, but this hasn't been
+> verified yet — please report back if you try one.
+
+For routers from any other vendor (UniFi, OpenWrt, EdgeOS, MikroTik,
+TP-Link, Netgear, ISP-supplied boxes, etc.), the **DNS-only** layer of
+Guardium still works fine — that's where most of the value lives. The
+optional **router integration stages** (MAC kill switch, DNS Director, DoH
+IP blocklist) are vendor-specific and will need a new adapter module per
+firmware family.
+
+If you want a vendor adapter and you're comfortable poking at your own
+router, [open an issue](../../issues/new) describing the model and
+firmware. Adding a new vendor is realistically a **community effort**: the
+author needs direct (or remote, shell-access) cooperation from someone
+who owns the device, because each firmware exposes a different API surface
+(NVRAM keys, HTTP endpoints, SSH commands, iptables modules) and there's
+no way to develop or test a vendor adapter blind. PRs and "here's what my
+router's admin UI looks like" screenshots are welcome.
+
+---
+
 ## Screenshots
 
 The mobile-first **Family view** is what most parents will live in. The
@@ -334,40 +361,170 @@ enable Stage 2 and Stage 3.
 
 ## Install
 
-### One-shot, from your workstation
+There are two pieces to a Guardium DNS deployment:
+
+1. A **Technitium DNS server** somewhere on your LAN (the actual resolver).
+2. The **Guardium dashboard** service, which usually lives on the same host
+   as Technitium and talks to it over `127.0.0.1:5380`.
+
+You also need a way to make the devices on your network *use* Technitium for
+DNS — that's a one-time change on your home router.
+
+### Reference deployment (what the author runs)
+
+This is the exact setup the project is developed and tested on. Mileage
+will vary with other distributions, hypervisors, and routers; this is the
+known-good path.
+
+- **Hypervisor:** Proxmox VE.
+- **Technitium DNS:** Debian 13 LXC container, installed via the brilliant
+  [community-scripts.org](https://community-scripts.org/scripts/technitiumdns)
+  Proxmox helper script (see Step 1).
+- **Guardium dashboard:** installed *inside the same LXC* alongside
+  Technitium, by `rsync`-ing this repo and running `deploy/install.sh`.
+- **Router:** ASUS RT-BE88U on stock firmware, with LAN DHCP pointing every
+  client at the Technitium LXC IP.
+
+If you don't have Proxmox, anything that gives you a Linux host with
+network reach to your LAN will do — a Raspberry Pi, a NUC, an Ubuntu VM in
+your cloud of choice over a VPN, etc. The Guardium installer assumes a
+modern Debian/Ubuntu environment with `apt`.
+
+### Step 1 — Install Technitium DNS
+
+If you already have a working Technitium server, **skip to Step 2**.
+
+The author's recommended path on Proxmox is the
+[community-scripts.org Technitium DNS helper](https://community-scripts.org/scripts/technitiumdns).
+On your Proxmox VE node's shell, run:
 
 ```bash
-git clone https://github.com/<your-account>/guardium-dns.git
-cd guardium-dns
-./deploy.sh root@your-dns-server
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/technitiumdns.sh)"
 ```
 
-`deploy.sh` rsyncs the project to `/opt/dns-dashboard/`, then runs
-`deploy/install.sh` on the remote which:
+Accept the defaults (Debian 13, 1 CPU, 512 MB RAM, 2 GB disk) or bump them
+if you want bigger query log retention. When it finishes, write down the
+LXC's IP address — you'll point your router at it shortly.
+
+> The helper script comes from the community-driven
+> [Proxmox VE Scripts](https://community-scripts.org/) project (built in
+> memory of [tteck](https://github.com/tteck)). Huge thanks to them.
+
+Verify Technitium is reachable:
+
+```bash
+curl -s http://<LXC-IP>:5380/ | head -1
+```
+
+You should get an HTML response. If not, check `pct list` on the Proxmox
+host and `pct start <id>` if the container isn't running.
+
+### Step 2 — Enable the Advanced Blocking app
+
+Guardium maps profiles 1:1 onto groups inside Technitium's **Advanced
+Blocking** app, so the app needs to be installed.
+
+1. Open the Technitium web UI: `http://<LXC-IP>:5380/`.
+2. Create your admin user when prompted.
+3. Go to **Apps**, click **Browse Store**, find **Advanced Blocking**, and
+   click **Install**.
+4. Once installed, click its **Config** button to open it at least once —
+   this creates the empty `groups` / `networkGroupMap` structures that
+   Guardium will populate on first launch.
+
+### Step 3 — Get a Technitium permanent API token
+
+Guardium uses a permanent service token for the one-time bootstrap (after
+that, the UI uses your regular Technitium login credentials over an
+HttpOnly cookie).
+
+In the Technitium UI:
+
+1. Click your username (top-right) → **Create API Token**.
+2. Name it something obvious like `guardium-bootstrap`.
+3. Copy the token — it is shown exactly once.
+
+### Step 4 — Install Guardium DNS
+
+From a workstation that can SSH to your Technitium host (in the reference
+setup, the Proxmox LXC):
+
+```bash
+git clone https://github.com/adzza/guardium-dns.git
+cd guardium-dns
+BOOT_TOKEN="<paste-the-token-from-step-3>" ./deploy.sh root@<LXC-IP>
+```
+
+`deploy.sh` rsyncs the project to `/opt/dns-dashboard/` on the remote and
+runs `deploy/install.sh`, which:
 
 1. installs Python + venv tooling if missing,
 2. creates a dedicated `dns-dashboard` system user,
 3. owns `/opt/dns-dashboard` and `/var/lib/dns-dashboard`,
 4. builds a venv and installs Python deps,
-5. writes `/etc/dns-dashboard.env` (only on first install),
+5. writes `/etc/dns-dashboard.env` (only on first install, including your
+   bootstrap token),
 6. installs and starts the `dns-dashboard.service` systemd unit.
 
-When it's done you'll see something like:
+When it finishes you'll see:
 
 ```
-==> done. Dashboard URL:  http://10.0.0.5:8080/
+==> done. Dashboard URL:  http://<LXC-IP>:8080/
 ```
 
-Open that URL, sign in with your Technitium admin user, and you're in.
+Open that URL, sign in with the same admin user you created in Technitium,
+and you're in.
 
-### Manual install on the server
+#### Manual install (no rsync)
 
-If you prefer to skip the rsync wrapper:
+If you'd rather not push from a workstation:
 
 ```bash
-sudo git clone https://github.com/<your-account>/guardium-dns.git /opt/dns-dashboard
-sudo bash /opt/dns-dashboard/deploy/install.sh
+sudo git clone https://github.com/adzza/guardium-dns.git /opt/dns-dashboard
+sudo DASHBOARD_BOOT_TOKEN=<token> bash /opt/dns-dashboard/deploy/install.sh
 ```
+
+### Step 5 — Point your router's DHCP at Technitium
+
+Until your router hands out the Technitium IP as the network's DNS, nothing
+on your LAN is actually using it.
+
+**On ASUS routers (AsusWRT or Merlin):**
+
+1. Sign in to your router's admin UI (usually `http://router.asus.com/` or
+   `http://192.168.1.1/`).
+2. Go to **LAN** → **DHCP Server**.
+3. Set **DNS Server 1** to your Technitium LXC's IP.
+4. Leave **DNS Server 2** **blank** if you want hard guarantees that every
+   client uses Technitium. If you set a public fallback like `1.1.1.1`,
+   clients are free to pick that one and all your filtering goes out the
+   window.
+5. Set **Advertise router's IP in addition to user-specified DNS** to
+   **No**.
+6. Click **Apply**.
+7. Reboot any device on your LAN (or wait for its DHCP lease to renew) so
+   it picks up the new DNS setting.
+
+**On other routers:** the exact menu name varies, but you're looking for
+the DHCP server's DNS option — sometimes called "Custom DNS", "DNS Server
+override", or just "DNS Servers". The principle is identical: primary =
+your Technitium IP, secondary = empty (or another internal resolver, but
+never a public one if you want enforcement).
+
+### Step 6 (optional) — Enable router integration
+
+If you're on an ASUS router and have devices that bypass DNS (smart TVs,
+Google TVs, consoles), open the dashboard's **Settings → Router** page and
+fill in:
+
+- Router IP, username, password.
+- (Optional) SSH credentials for Stage 3 (DoH IP blocklist).
+
+Click **Test connection**, then toggle the stages you want and **Apply**.
+The reconciler will push the rules to the router on the next 60-second
+tick and self-heal them on every tick after that. Toggling a stage off
+triggers a clean teardown of all rules the dashboard added — your manual
+router config is never touched.
 
 ---
 
@@ -520,6 +677,12 @@ the approach before you spend time on a PR.
 - [Technitium DNS Server](https://technitium.com/dns/) — the brilliant
   open-source recursive DNS server this whole project is built around.
   Huge thanks to [@ShreyasZare](https://github.com/ShreyasZare).
+- [Proxmox VE Helper Scripts](https://community-scripts.org/) — the
+  community-driven script collection (built in memory of
+  [tteck](https://github.com/tteck)) that makes spinning up a Technitium
+  LXC on Proxmox a one-liner. The reference deployment in this README
+  uses their
+  [Technitium DNS script](https://community-scripts.org/scripts/technitiumdns).
 - [StevenBlack/hosts](https://github.com/StevenBlack/hosts) — the
   ad/tracker blocklist that powers the `default` profile.
 - [Wireshark `manuf`](https://www.wireshark.org/) — fallback OUI database
