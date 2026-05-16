@@ -1,0 +1,38 @@
+[Unit]
+Description=Guardium DNS — Parental controls for Technitium DNS
+Documentation=https://github.com/TechnitiumSoftware/DnsServer/blob/master/APIDOCS.md
+After=network-online.target technitium.service
+Wants=network-online.target
+# We don't *require* technitium to be up at boot -- the dashboard will retry
+# its own seeding logic on first authenticated request.
+
+[Service]
+Type=simple
+User=dns-dashboard
+Group=dns-dashboard
+WorkingDirectory=/opt/dns-dashboard
+EnvironmentFile=/etc/dns-dashboard.env
+ExecStart=/opt/dns-dashboard/.venv/bin/python -m server.app
+Restart=always
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectClock=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/var/lib/dns-dashboard /var/log/dns-dashboard
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

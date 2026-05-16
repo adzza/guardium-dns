@@ -1,0 +1,49 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Virtualenvs ---
+.venv/
+venv/
+env/
+
+# --- Secrets / runtime state (never commit) ---
+*.env
+.env
+.env.*
+!.env.example
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+oui.csv
+manuf
+data/
+state/
+
+# --- IDE / editor ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.cursor/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Build / dist ---
+dist/
+build/
+*.tgz
+*.zip

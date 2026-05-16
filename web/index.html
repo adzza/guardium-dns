@@ -1,0 +1,1840 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1020" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Guardium DNS — Parental controls for Technitium DNS</title>
+  <meta name="description" content="Guardium DNS — parental controls, scheduled blocking, and per-device profiles for Technitium DNS." />
+  <meta name="application-name" content="Guardium DNS" />
+  <meta name="apple-mobile-web-app-title" content="Guardium" />
+  <meta property="og:title" content="Guardium DNS" />
+  <meta property="og:description" content="Parental controls for Technitium DNS." />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      safelist: [
+        ...['slate','blue','sky','indigo','emerald','rose','red','pink','fuchsia','purple','violet','amber','orange','yellow'].flatMap(c => [
+          `bg-${c}-500/10`, `bg-${c}-500/15`, `bg-${c}-500/20`, `bg-${c}-500/30`, `bg-${c}-500/40`,
+          `bg-${c}-500/60`, `bg-${c}-500/70`, `bg-${c}-600/30`, `bg-${c}-600/40`,
+          `bg-${c}-600/60`, `bg-${c}-600/70`, `bg-${c}-600/80`, `bg-${c}-700/40`,
+          `bg-${c}-700/80`, `bg-${c}-800`, `bg-${c}-900`, `bg-${c}-900/40`,
+          `text-${c}-50`, `text-${c}-100`, `text-${c}-200`, `text-${c}-300`, `text-${c}-400`,
+          `ring-${c}-300/40`, `ring-${c}-400/20`, `ring-${c}-400/30`, `ring-${c}-400/40`,
+          `border-${c}-400/30`, `border-${c}-500/30`,
+          `from-${c}-500/30`, `from-${c}-500/40`, `from-${c}-500/60`, `from-${c}-600/30`,
+          `from-${c}-600/40`, `from-${c}-600/60`, `from-${c}-600/70`, `from-${c}-700/80`,
+          `from-${c}-800`, `to-${c}-300`, `to-${c}-400/30`, `to-${c}-500/30`,
+          `to-${c}-500/40`, `to-${c}-600/30`, `to-${c}-600/40`, `to-${c}-900`,
+        ]),
+      ],
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+  <link rel="apple-touch-icon" href="/assets/favicon.svg" />
+  <meta name="theme-color" content="#6366f1" />
+</head>
+<body class="min-h-screen text-slate-100 antialiased pb-24 sm:pb-6 selection:bg-indigo-500/40"
+      x-data="dashboard()" x-init="init()" x-cloak>
+
+  <div class="fixed inset-0 -z-10 overflow-hidden pointer-events-none">
+    <div class="absolute -top-32 -left-32 w-[40rem] h-[40rem] rounded-full bg-indigo-600/20 blur-3xl"></div>
+    <div class="absolute top-1/3 -right-40 w-[36rem] h-[36rem] rounded-full bg-fuchsia-600/15 blur-3xl"></div>
+    <div class="absolute -bottom-40 left-1/3 w-[36rem] h-[36rem] rounded-full bg-sky-500/10 blur-3xl"></div>
+  </div>
+
+  <!-- ============= TOP BAR ============= -->
+  <header class="sticky top-0 z-30 bg-slate-950/70 backdrop-blur-xl ring-1 ring-white/5 border-b border-white/[0.06]">
+    <div class="max-w-7xl mx-auto px-3 sm:px-6 py-2.5 flex items-center gap-2">
+      <div class="flex items-center gap-2 font-semibold tracking-tight">
+        <span class="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 shadow-lg shadow-indigo-500/30">
+          <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 21l-7.5-4.33V7.33L12 3l7.5 4.33v9.34L12 21z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9.5 12.5l1.8 1.8 3.7-4" />
+          </svg>
+        </span>
+        <div class="hidden sm:flex flex-col leading-tight">
+          <span class="text-base">Guardium DNS</span>
+          <span class="text-[10px] font-normal text-slate-400 tracking-normal">Parental controls for Technitium DNS</span>
+        </div>
+        <span class="sm:hidden text-base">Guardium</span>
+      </div>
+
+      <!-- VIEW TOGGLE (always visible) -->
+      <div class="ml-2 sm:ml-4 inline-flex rounded-xl bg-slate-900/70 ring-1 ring-white/5 p-0.5 text-xs">
+        <button @click="setView('family')"
+                :class="view==='family' ? 'bg-indigo-500/30 text-indigo-100 ring-1 ring-indigo-400/40' : 'text-slate-400 hover:text-slate-200'"
+                class="px-3 py-1.5 rounded-lg transition">
+          <span class="inline-flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            Family
+          </span>
+        </button>
+        <button @click="setView('techie')"
+                :class="view==='techie' ? 'bg-indigo-500/30 text-indigo-100 ring-1 ring-indigo-400/40' : 'text-slate-400 hover:text-slate-200'"
+                class="px-3 py-1.5 rounded-lg transition">
+          <span class="inline-flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
+            </svg>
+            Techie
+          </span>
+        </button>
+      </div>
+
+      <!-- desktop tabs (techie only) -->
+      <nav class="hidden md:flex items-center gap-1 ml-3 text-sm" x-show="view==='techie'">
+        <button @click="tab='overview'" :class="tabClass('overview')">Overview</button>
+        <button @click="tab='devices'" :class="tabClass('devices')">Devices</button>
+        <button @click="tab='domains'" :class="tabClass('domains')">Domains</button>
+        <button @click="tab='audit'" :class="tabClass('audit')">Audit</button>
+        <button @click="openSettings()" :class="tabClass('settings')">Settings</button>
+      </nav>
+
+      <div class="ml-auto flex items-center gap-1.5">
+        <select x-model="timeRange" @change="refresh()" x-show="view==='techie'"
+                class="bg-slate-800/70 border border-slate-700/70 text-xs rounded-lg px-2 py-1.5 hidden sm:block">
+          <option value="LastHour">Last hour</option>
+          <option value="LastDay">Last 24h</option>
+          <option value="LastWeek">Last week</option>
+          <option value="LastMonth">Last month</option>
+        </select>
+        <button @click="refresh()" :disabled="loading"
+                class="inline-flex items-center justify-center w-8 h-8 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 sm:text-xs rounded-lg bg-slate-800/70 hover:bg-slate-700 ring-1 ring-white/5 disabled:opacity-50">
+          <svg class="w-4 h-4" :class="loading && 'animate-spin'" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v6h6M20 20v-6h-6M4.6 14a8 8 0 0014.8 2M19.4 10A8 8 0 004.6 8" />
+          </svg>
+          <span class="hidden sm:inline ml-1.5">Refresh</span>
+        </button>
+        <button @click="logout()" title="Sign out" class="inline-flex items-center justify-center w-8 h-8 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-7.5A2.25 2.25 0 003.75 5.25v13.5A2.25 2.25 0 006 21h7.5A2.25 2.25 0 0015.75 18.75V15m3.75-3H9m0 0l3-3m-3 3l3 3" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-6 space-y-5 sm:space-y-6">
+
+    <template x-if="error">
+      <div class="rounded-xl bg-rose-500/10 ring-1 ring-rose-400/30 text-rose-200 px-4 py-3 text-sm flex items-start gap-3">
+        <div class="flex-1" x-text="error"></div>
+        <button @click="error=null" class="text-rose-300 hover:text-white text-lg leading-none">&times;</button>
+      </div>
+    </template>
+
+    <!-- Family-pause banner (visible across both views when active) -->
+    <template x-if="familyPause">
+      <div class="rounded-2xl bg-rose-500/15 ring-1 ring-rose-400/30 px-4 py-3 sm:px-5 sm:py-4 flex items-center gap-3">
+        <div class="text-2xl">🛑</div>
+        <div class="flex-1">
+          <div class="font-semibold text-rose-100">Family pause is on</div>
+          <div class="text-xs text-rose-200/80">
+            Until <span x-text="formatTime(familyPause.expiresAt * 1000)"></span>
+            <span x-text="'(' + remainingMinutes(familyPause.expiresAt) + ' left)'"></span>
+          </div>
+        </div>
+        <button @click="resumeFamily()" class="px-3 py-2 rounded-lg bg-rose-500 hover:bg-rose-400 text-white text-sm font-medium">
+          End now
+        </button>
+      </div>
+    </template>
+
+    <!-- ====================================================================
+         FAMILY VIEW
+         ==================================================================== -->
+    <section x-show="view==='family'" class="space-y-5 sm:space-y-6">
+
+      <!-- TODAY STRIP -->
+      <div class="rounded-2xl ring-1 ring-white/5 bg-slate-900/60 backdrop-blur-sm p-4 sm:p-5">
+        <div class="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <div class="text-xs text-slate-400 uppercase tracking-wider" x-text="todayLabel()"></div>
+            <div class="text-2xl sm:text-3xl font-semibold mt-0.5">
+              <span x-text="onlineCount() + ' devices online'"></span>
+              <span class="text-slate-500" x-text="totalDevices() ? ' / ' + totalDevices() : ''"></span>
+            </div>
+            <div class="text-sm text-slate-400 mt-0.5" x-text="weatherLine()"></div>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button @click="openFamilyPause()" :disabled="!!familyPause"
+                    class="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 ring-1 ring-rose-400/30 text-rose-200 text-sm font-medium disabled:opacity-50">
+              🍝 Pause for dinner
+            </button>
+            <button @click="openCreatePerson()"
+                    class="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-500/15 hover:bg-indigo-500/25 ring-1 ring-indigo-400/30 text-indigo-200 text-sm font-medium">
+              + Add person
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- PEOPLE GRID -->
+      <section x-show="people.length">
+        <div class="flex items-center justify-between mb-2 px-1">
+          <h2 class="text-sm font-medium text-slate-300 uppercase tracking-wider">People</h2>
+          <span class="text-[11px] text-slate-500" x-text="people.length + ' family members'"></span>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <template x-for="p in people" :key="'person-'+p.id">
+            <button @click="openPerson(p)"
+                    class="group text-left rounded-2xl ring-1 ring-white/5 bg-gradient-to-br from-slate-900/80 to-slate-900/40 hover:ring-indigo-400/30 transition shadow-lg shadow-black/20 p-4 active:scale-[0.99]">
+              <div class="flex items-start gap-3">
+                <div class="flex items-center justify-center w-12 h-12 rounded-xl text-2xl ring-1 ring-white/10 flex-none"
+                     :class="personGradient(p)">
+                  <span x-text="p.avatar || personInitials(p)"></span>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="font-semibold text-base truncate" x-text="p.name"></div>
+                  <div class="text-[11px] text-slate-400 mt-0.5">
+                    <span x-text="p.deviceCount + (p.deviceCount === 1 ? ' device' : ' devices')"></span>
+                    <span x-show="p.onlineCount > 0" class="text-emerald-400">
+                      · <span x-text="p.onlineCount"></span> online
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Effective state line -->
+              <div class="mt-3 flex items-center gap-2">
+                <span class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium ring-1"
+                      :class="effectiveChip(p.effective)">
+                  <span x-text="effectiveEmoji(p.effective)"></span>
+                  <span x-text="effectiveLabel(p.effective)"></span>
+                </span>
+                <span x-show="p.effective.expiresAt" class="text-[10px] text-slate-500">
+                  until <span x-text="formatTime(p.effective.expiresAt * 1000)"></span>
+                </span>
+              </div>
+
+              <!-- Quota progress -->
+              <template x-if="primaryQuota(p)">
+                <div class="mt-3">
+                  <div class="flex items-center justify-between text-[11px] mb-1">
+                    <span class="text-slate-400" x-text="'Today: ' + formatMinutes(p.todayMinutes) + ' / ' + formatMinutes(primaryQuota(p).minutesMax)"></span>
+                    <span :class="quotaToneText(p)" x-text="quotaPctLabel(p)"></span>
+                  </div>
+                  <div class="h-2 rounded-full bg-slate-800 overflow-hidden">
+                    <div class="h-full rounded-full transition-all"
+                         :class="quotaBar(p)"
+                         :style="'width:' + Math.min(100, quotaPct(p)) + '%'"></div>
+                  </div>
+                </div>
+              </template>
+
+              <!-- Active schedule chip -->
+              <template x-if="activeScheduleFor(p)">
+                <div class="mt-2 inline-flex items-center gap-1.5 text-[11px] text-amber-200/80">
+                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span x-text="activeScheduleFor(p).name || 'Scheduled'"></span>
+                  <span class="text-amber-200/60" x-text="'until ' + formatHM(activeScheduleFor(p).endMin)"></span>
+                </div>
+              </template>
+
+              <!-- Quick actions -->
+              <div class="mt-3 grid grid-cols-3 gap-1.5" @click.stop>
+                <button @click="quickPausePerson(p, 30)"
+                        class="text-xs px-2 py-1.5 rounded-lg bg-slate-800/70 hover:bg-rose-500/20 ring-1 ring-white/5 hover:ring-rose-400/30 text-slate-200">
+                  Pause 30m
+                </button>
+                <button @click="quickPausePerson(p, 60)"
+                        class="text-xs px-2 py-1.5 rounded-lg bg-slate-800/70 hover:bg-rose-500/20 ring-1 ring-white/5 hover:ring-rose-400/30 text-slate-200">
+                  Pause 1h
+                </button>
+                <button @click="endOfDayPerson(p)"
+                        class="text-xs px-2 py-1.5 rounded-lg bg-slate-800/70 hover:bg-slate-700/70 ring-1 ring-white/5 text-slate-200">
+                  Off
+                </button>
+              </div>
+            </button>
+          </template>
+        </div>
+      </section>
+
+      <!-- DEVICES BY PROFILE -->
+      <section x-show="devicesByProfile().length">
+        <div class="flex items-center justify-between mb-2 px-1">
+          <h2 class="text-sm font-medium text-slate-300 uppercase tracking-wider">Devices</h2>
+          <span class="text-[11px] text-slate-500">
+            <span x-text="devicesByProfile().reduce((n, g) => n + g.devices.length, 0)"></span>
+            with rules
+          </span>
+        </div>
+        <p class="text-[11px] text-slate-500 mb-2 px-1">
+          Devices with their own content profile (no person attached). Tap any device to change.
+        </p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <template x-for="g in devicesByProfile()" :key="'dgrp-'+g.profile.id">
+            <div class="rounded-2xl ring-1 ring-white/5 bg-gradient-to-br from-slate-900/80 to-slate-900/40 shadow-lg shadow-black/20 p-4">
+              <div class="flex items-start gap-3">
+                <div class="flex items-center justify-center w-12 h-12 rounded-xl text-2xl ring-1 ring-white/10 flex-none"
+                     :class="profileGradient(g.profile.id)">
+                  <span x-text="g.profile.emoji"></span>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="font-semibold text-base truncate" x-text="g.profile.label"></div>
+                  <div class="text-[11px] text-slate-400 mt-0.5">
+                    <span x-text="g.devices.length + (g.devices.length === 1 ? ' device' : ' devices')"></span>
+                    <span x-show="g.onlineCount > 0" class="text-emerald-400">
+                      · <span x-text="g.onlineCount"></span> online
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <p class="text-[11px] text-slate-400/90 mt-2 leading-snug line-clamp-2"
+                 x-text="g.profile.tagline || g.profile.description"></p>
+              <div class="mt-3 -mx-1 divide-y divide-white/5 ring-1 ring-white/5 rounded-xl bg-slate-950/30 overflow-hidden">
+                <template x-for="d in g.devices" :key="'dgd-'+g.profile.id+'-'+d.ip">
+                  <div class="w-full flex items-stretch hover:bg-white/[0.04] transition">
+                    <button @click="openAssign(d)"
+                            class="flex-1 min-w-0 text-left flex items-center gap-2.5 px-3 py-2 active:bg-white/[0.06]">
+                      <span :class="d.online ? 'bg-emerald-400 shadow-[0_0_0_3px_rgba(16,185,129,0.18)]' : 'bg-slate-600'" class="w-2 h-2 rounded-full flex-none"></span>
+                      <div class="flex-1 min-w-0">
+                        <div class="text-sm truncate" x-text="displayName(d)"></div>
+                        <div class="text-[10px] text-slate-500 truncate font-mono" x-text="d.ip"></div>
+                      </div>
+                    </button>
+                    <button @click.stop="openDiagnose(d)" title="Diagnose"
+                            class="px-3 flex items-center text-slate-500 hover:text-emerald-300 active:bg-white/[0.06]">
+                      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12h4l3-9 4 18 3-9h4" /></svg>
+                    </button>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+      </section>
+
+      <!-- FIRST-RUN HELPER -->
+      <section x-show="!people.length" class="rounded-2xl ring-1 ring-indigo-400/20 bg-indigo-500/5 backdrop-blur-sm p-5 sm:p-6">
+        <div class="flex items-start gap-4">
+          <div class="text-3xl flex-none">👨‍👩‍👧‍👦</div>
+          <div class="flex-1">
+            <div class="font-semibold text-base mb-1">Set up your family</div>
+            <div class="text-sm text-slate-300 mb-3">
+              Add a person for each child and adult, then drag their devices into their card.
+              Once a person exists, you can set bedtimes, daily limits, and one-tap pause from the Family view.
+            </div>
+            <button @click="openCreatePerson()" class="px-3 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-medium">
+              Add your first person
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- UNASSIGNED DEVICES (no person, no profile) -->
+      <section x-show="unassignedDevices().length">
+        <div class="flex items-baseline justify-between mb-1 px-1 gap-3">
+          <h2 class="text-sm font-medium text-slate-300 uppercase tracking-wider">No rules yet</h2>
+          <button @click="showAllUnassigned = !showAllUnassigned"
+                  class="text-[11px] text-indigo-300 hover:text-indigo-200" x-show="unassignedDevices().length > 6">
+            <span x-text="showAllUnassigned ? 'Show less' : 'Show all (' + unassignedDevices().length + ')'"></span>
+          </button>
+        </div>
+        <p class="text-[11px] text-slate-500 mb-2 px-1">
+          Devices with no person and no profile. Tap <span class="text-indigo-300">Assign</span> to attach
+          to someone or set rules.
+        </p>
+        <div class="rounded-2xl ring-1 ring-white/5 bg-slate-900/40 divide-y divide-white/5">
+          <template x-for="d in (showAllUnassigned ? unassignedDevices() : unassignedDevices().slice(0,6))" :key="'una-'+d.ip">
+            <div class="flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/[0.03]">
+              <span :class="d.online ? 'bg-emerald-400 shadow-[0_0_0_3px_rgba(16,185,129,0.18)]' : 'bg-slate-600'" class="w-2 h-2 rounded-full flex-none"></span>
+              <div class="flex-1 min-w-0">
+                <div class="text-sm font-medium truncate" x-text="displayName(d)"></div>
+                <div class="text-[11px] text-slate-500 truncate font-mono" x-text="d.ip + (d.hostname && d.label ? ' · ' + d.hostname : '')"></div>
+              </div>
+              <button @click="openDiagnose(d)" title="Diagnose"
+                      class="inline-flex items-center justify-center w-8 h-8 rounded-lg text-slate-400 hover:text-emerald-300 hover:bg-white/[0.03] flex-none">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12h4l3-9 4 18 3-9h4" /></svg>
+              </button>
+              <button @click="openAssign(d)"
+                      class="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 ring-1 ring-indigo-400/30 text-indigo-200 font-medium flex-none">
+                Assign
+                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
+              </button>
+            </div>
+          </template>
+        </div>
+      </section>
+
+      <!-- BLOCKED RIGHT NOW (light "what just got blocked" feed) -->
+      <section x-show="topBlocked.length">
+        <div class="flex items-center justify-between mb-2 px-1">
+          <h2 class="text-sm font-medium text-slate-300 uppercase tracking-wider">Blocked recently</h2>
+          <span class="text-[11px] text-slate-500" x-text="formatNum(stats.totalBlocked || 0) + ' total today'"></span>
+        </div>
+        <div class="rounded-2xl ring-1 ring-rose-400/10 bg-rose-950/20 backdrop-blur-sm p-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-1">
+            <template x-for="d in topBlocked.slice(0, 12)" :key="'fb-'+d.name">
+              <div class="flex items-center gap-2 py-1 px-2 rounded hover:bg-white/[0.03]">
+                <span class="text-xs text-rose-400/80 tabular-nums w-10 text-right" x-text="formatNum(d.hits)"></span>
+                <span class="text-sm truncate text-slate-300" x-text="d.name"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <!-- ====================================================================
+         TECHIE VIEW (existing dashboard)
+         ==================================================================== -->
+    <section x-show="view==='techie'" class="space-y-5 sm:space-y-6">
+
+      <!-- KPI CARDS -->
+      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3" x-show="tab==='overview'">
+        <template x-for="card in kpis()" :key="card.k">
+          <div class="rounded-2xl ring-1 ring-white/5 bg-slate-900/60 backdrop-blur-sm px-3 sm:px-4 py-3 hover:ring-white/10 transition">
+            <div class="flex items-center gap-1.5">
+              <span class="text-base" x-text="card.icon"></span>
+              <div class="text-[10px] sm:text-[11px] uppercase tracking-wider text-slate-400" x-text="card.label"></div>
+            </div>
+            <div class="text-xl sm:text-2xl font-bold mt-1 tabular-nums" :class="card.tone" x-text="card.value"></div>
+            <div class="text-[10px] sm:text-xs text-slate-500 mt-0.5 truncate" x-text="card.sub"></div>
+          </div>
+        </template>
+      </div>
+
+      <!-- DISTRIBUTION (techie) -->
+      <section class="rounded-2xl ring-1 ring-white/5 bg-slate-900/60 backdrop-blur-sm p-4 sm:p-5" x-show="tab==='overview'">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-sm font-medium text-slate-300 uppercase tracking-wider">Profile distribution (effective)</h2>
+          <span class="text-[11px] text-slate-500" x-text="totalAssigned() + ' assigned · ' + devices.length + ' known'"></span>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <template x-for="bucket in distributionView()" :key="bucket.key">
+            <div class="rounded-xl ring-1 ring-white/5 bg-slate-950/40 p-3.5">
+              <div class="flex items-center gap-2 mb-2">
+                <div class="flex items-center justify-center w-8 h-8 rounded-lg text-lg ring-1 ring-white/5"
+                     :class="profileGradient(bucket.profileId)">
+                  <span x-text="bucket.emoji"></span>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm font-medium" x-text="bucket.label"></div>
+                  <div class="text-[10px] text-slate-500" x-text="bucket.subtitle"></div>
+                </div>
+                <span class="text-2xl font-semibold tabular-nums" x-text="bucket.count"></span>
+              </div>
+              <div class="flex flex-wrap gap-1">
+                <template x-for="m in bucket.devices.slice(0,8)" :key="bucket.key+'-'+m.ip">
+                  <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded ring-1 ring-white/5 bg-slate-900/60 text-slate-300">
+                    <span class="w-1.5 h-1.5 rounded-full" :class="m.online ? 'bg-emerald-400' : 'bg-slate-600'"></span>
+                    <span x-text="m.label || m.hostname || m.ip"></span>
+                  </span>
+                </template>
+                <span x-show="bucket.devices.length > 8" class="text-[10px] text-slate-500 px-1.5 py-0.5">
+                  +<span x-text="bucket.devices.length - 8"></span>
+                </span>
+              </div>
+            </div>
+          </template>
+        </div>
+      </section>
+
+      <!-- MAIN CHART -->
+      <section class="rounded-2xl ring-1 ring-white/5 bg-slate-900/60 backdrop-blur-sm p-4 sm:p-5" x-show="tab==='overview'">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-sm font-medium text-slate-300 uppercase tracking-wider">Queries over time</h2>
+          <div class="text-[11px] text-slate-500" x-text="timeRangeLabel()"></div>
+        </div>
+        <div class="h-56 sm:h-72"><canvas id="mainChart"></canvas></div>
+      </section>
+
+      <div class="grid lg:grid-cols-2 gap-4 sm:gap-5" x-show="tab==='overview'">
+        <section class="rounded-2xl ring-1 ring-white/5 bg-slate-900/60 backdrop-blur-sm p-4 sm:p-5">
+          <h2 class="text-sm font-medium text-slate-300 uppercase tracking-wider mb-3">🚦 Top talkers</h2>
+          <ol class="space-y-1">
+            <template x-for="d in devices.filter(x => x.hits > 0).slice(0, 10)" :key="'top-'+d.ip">
+              <li class="flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-white/[0.04]">
+                <button @click="toggleFavourite(d)" :class="d.favourite ? 'text-amber-400' : 'text-slate-600 hover:text-amber-400'" class="text-base leading-none">★</button>
+                <span :class="d.online ? 'bg-emerald-400 shadow-[0_0_0_3px_rgba(16,185,129,0.18)]' : 'bg-slate-600'" class="w-2 h-2 rounded-full flex-none"></span>
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm font-medium truncate" x-text="displayName(d)"></div>
+                  <div class="text-[11px] text-slate-500 truncate" x-text="subtitle(d)"></div>
+                </div>
+                <span class="text-xs text-slate-400 tabular-nums" x-text="formatNum(d.hits)"></span>
+                <span x-show="d.profileId" class="text-[10px] px-1.5 py-0.5 rounded ring-1" :class="profileChip(d.profileId)">
+                  <span x-text="profileEmoji(d.profileId)"></span>
+                </span>
+              </li>
+            </template>
+          </ol>
+        </section>
+
+        <section class="rounded-2xl ring-1 ring-white/5 bg-slate-900/60 backdrop-blur-sm p-4 sm:p-5">
+          <h2 class="text-sm font-medium text-slate-300 uppercase tracking-wider mb-3">🌍 Top domains</h2>
+          <ol class="space-y-1">
+            <template x-for="(d, i) in topDomains.slice(0, 10)" :key="'dom-'+d.name">
+              <li class="flex items-center gap-2.5 px-2 py-1.5 rounded-xl hover:bg-white/[0.04]">
+                <span class="text-[11px] text-slate-600 w-5 text-right tabular-nums" x-text="i+1"></span>
+                <span class="text-sm flex-1 truncate" x-text="d.name"></span>
+                <span class="text-xs text-slate-400 tabular-nums" x-text="formatNum(d.hits)"></span>
+              </li>
+            </template>
+          </ol>
+        </section>
+      </div>
+
+      <!-- DEVICES TAB -->
+      <div x-show="tab==='devices'" class="rounded-2xl ring-1 ring-white/5 bg-slate-900/60 backdrop-blur-sm p-4 sm:p-5">
+        <div class="flex flex-wrap items-center gap-2 mb-3">
+          <h2 class="text-sm font-medium text-slate-300 uppercase tracking-wider mr-auto">Devices &amp; controls</h2>
+          <button @click="refreshHostnames()" class="text-[11px] text-slate-400 hover:text-slate-200 px-2 py-1 rounded hover:bg-white/5">↻ hostnames</button>
+          <button @click="adoptAllHostnames()" class="text-[11px] text-indigo-300 hover:text-indigo-200 px-2 py-1 rounded hover:bg-white/5">Adopt all</button>
+        </div>
+        <div class="relative mb-3">
+          <input type="search" placeholder="Filter by name, IP, hostname or profile..." x-model="deviceFilter"
+                 class="w-full bg-slate-950/60 border border-slate-800 focus:border-indigo-400 rounded-xl pl-10 pr-3 py-2.5 text-sm outline-none" />
+          <svg class="absolute left-3.5 top-3 w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M10.5 18a7.5 7.5 0 100-15 7.5 7.5 0 000 15z" />
+          </svg>
+        </div>
+
+        <div class="hidden md:block overflow-x-auto -mx-4 sm:mx-0">
+          <table class="min-w-full text-sm">
+            <thead class="text-[10px] uppercase tracking-wider text-slate-500">
+              <tr class="border-b border-white/[0.06]">
+                <th class="text-left px-2 py-2 font-medium w-8"></th>
+                <th class="text-left px-3 py-2 font-medium">Device</th>
+                <th class="text-left px-3 py-2 font-medium hidden lg:table-cell">IP</th>
+                <th class="text-right px-3 py-2 font-medium">Hits</th>
+                <th class="text-left px-3 py-2 font-medium">Person</th>
+                <th class="text-left px-3 py-2 font-medium">Profile</th>
+                <th class="text-left px-3 py-2 font-medium">Effective</th>
+                <th class="text-right px-3 py-2 font-medium"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="d in filteredDevices()" :key="'tbl-'+d.ip">
+                <tr class="border-b border-white/[0.04] hover:bg-white/[0.03]">
+                  <td class="px-2 py-2">
+                    <button @click="toggleFavourite(d)" :class="d.favourite ? 'text-amber-400' : 'text-slate-600 hover:text-amber-400'" class="text-lg leading-none">★</button>
+                  </td>
+                  <td class="px-3 py-2.5">
+                    <div class="flex items-center gap-2.5 min-w-[10rem]">
+                      <span :class="d.online ? 'bg-emerald-400 shadow-[0_0_0_3px_rgba(16,185,129,0.18)]' : 'bg-slate-600'" class="w-2 h-2 rounded-full flex-none"></span>
+                      <div class="flex-1 min-w-0">
+                        <input type="text" :value="d.label || ''" @change="renameDevice(d, $event.target.value)"
+                               :placeholder="d.hostname || d.ip" autocomplete="off"
+                               class="bg-transparent border border-transparent hover:border-slate-700 focus:border-indigo-400 rounded-lg px-2 py-1 text-sm w-full outline-none" />
+                        <div class="text-[10px] text-slate-500 px-2 truncate lg:hidden">
+                          <span class="font-mono" x-text="d.ip"></span>
+                          <span x-show="d.hostname"> · <span class="font-mono" x-text="d.hostname"></span></span>
+                        </div>
+                        <div class="text-[10px] px-2 truncate flex items-center gap-1.5">
+                          <span x-show="d.fingerprintHint" class="text-indigo-300/90 font-medium" x-text="d.fingerprintHint"></span>
+                          <span x-show="d.vendor && d.fingerprintHint" class="text-slate-500">·</span>
+                          <span x-show="d.vendor" class="text-slate-400 truncate" x-text="d.vendor"></span>
+                          <button x-show="!d._identifying" @click.stop="identifyDevice(d)"
+                                  :title="(d.vendor||d.fingerprintHint) ? 'Re-identify this device' : 'Identify this device'"
+                                  class="ml-auto text-slate-500 hover:text-indigo-300 text-[10px] underline-offset-2 hover:underline">
+                            <span x-show="d.vendor||d.fingerprintHint">↻</span>
+                            <span x-show="!d.vendor && !d.fingerprintHint">🔎 identify</span>
+                          </button>
+                          <span x-show="d._identifying" class="ml-auto text-slate-500">identifying…</span>
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                  <td class="px-3 py-2.5 font-mono text-xs text-slate-400 hidden lg:table-cell" x-text="d.ip"></td>
+                  <td class="px-3 py-2.5 tabular-nums text-slate-300 text-right" x-text="formatNum(d.hits)"></td>
+                  <td class="px-3 py-2.5">
+                    <select :value="d.personId || ''" @change="attachToPerson(d, $event.target.value)"
+                            class="bg-slate-800/70 border border-slate-700 rounded-lg px-2 py-1 text-xs">
+                      <option value="">—</option>
+                      <template x-for="p in people" :key="'pa-'+d.ip+'-'+p.id">
+                        <option :value="p.id" x-text="(p.avatar || '') + ' ' + p.name"></option>
+                      </template>
+                    </select>
+                  </td>
+                  <td class="px-3 py-2.5">
+                    <select :value="d.baseProfileId || ''" @change="setDeviceBaseProfile(d, $event.target.value)"
+                            class="bg-slate-800/70 border border-slate-700 rounded-lg px-2 py-1 text-xs">
+                      <option value="">—</option>
+                      <template x-for="p in profiles" :key="'sel-'+d.ip+'-'+p.id">
+                        <option :value="p.id" x-text="p.emoji + '  ' + p.label"></option>
+                      </template>
+                    </select>
+                  </td>
+                  <td class="px-3 py-2.5">
+                    <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded ring-1"
+                          :class="effectiveChip(d.effective)">
+                      <span x-text="effectiveEmoji(d.effective)"></span>
+                      <span x-text="effectiveSourceShort(d.effective)"></span>
+                    </span>
+                  </td>
+                  <td class="px-3 py-2.5 text-right whitespace-nowrap">
+                    <div class="inline-flex items-center gap-1">
+                      <button @click="openQueries(d)" title="DNS query log"
+                              class="inline-flex items-center justify-center w-8 h-8 rounded-lg ring-1 ring-white/10 hover:bg-white/5 text-slate-300">
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M10.5 18a7.5 7.5 0 100-15 7.5 7.5 0 000 15z" /></svg>
+                      </button>
+                      <button @click="quickKill(d)"
+                              :title="d.profileId==='internet-off' ? 'Restore default profile' : 'Apply Internet off'"
+                              :class="d.profileId==='internet-off' ? 'bg-rose-500/20 text-rose-200 ring-rose-400/40' : 'hover:bg-rose-500/10 text-rose-300/90 ring-rose-400/20'"
+                              class="inline-flex items-center justify-center w-8 h-8 rounded-lg ring-1 text-base">
+                        <span x-text="d.profileId==='internet-off' ? '⏻' : '⛔'"></span>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- mobile cards -->
+        <div class="md:hidden space-y-2">
+          <template x-for="d in filteredDevices()" :key="'card-'+d.ip">
+            <div class="rounded-xl ring-1 ring-white/5 bg-slate-950/40 p-3">
+              <div class="flex items-start gap-2.5">
+                <button @click="toggleFavourite(d)" :class="d.favourite ? 'text-amber-400' : 'text-slate-600'" class="text-lg leading-none mt-0.5">★</button>
+                <span :class="d.online ? 'bg-emerald-400' : 'bg-slate-600'" class="w-2 h-2 rounded-full mt-2"></span>
+                <div class="flex-1 min-w-0">
+                  <input type="text" :value="d.label || ''" @change="renameDevice(d, $event.target.value)"
+                         :placeholder="d.hostname || d.ip"
+                         class="bg-transparent border-b border-transparent focus:border-indigo-400 px-0 py-0.5 text-base font-medium w-full outline-none" />
+                  <div class="text-[11px] text-slate-500 mt-0.5 truncate">
+                    <span class="font-mono" x-text="d.ip"></span>
+                    <span x-show="d.hostname"> · <span class="font-mono" x-text="d.hostname"></span></span>
+                  </div>
+                  <div class="text-[11px] mt-0.5 truncate flex items-center gap-1.5">
+                    <span x-show="d.fingerprintHint" class="text-indigo-300/90 font-medium" x-text="d.fingerprintHint"></span>
+                    <span x-show="d.vendor && d.fingerprintHint" class="text-slate-500">·</span>
+                    <span x-show="d.vendor" class="text-slate-400 truncate" x-text="d.vendor"></span>
+                    <button x-show="!d._identifying" @click.stop="identifyDevice(d)"
+                            class="ml-auto text-slate-500 hover:text-indigo-300 text-[11px]">
+                      <span x-show="d.vendor||d.fingerprintHint">↻</span>
+                      <span x-show="!d.vendor && !d.fingerprintHint">🔎</span>
+                    </button>
+                    <span x-show="d._identifying" class="ml-auto text-slate-500 text-[11px]">…</span>
+                  </div>
+                </div>
+                <span class="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded ring-1 mt-0.5" :class="effectiveChip(d.effective)">
+                  <span x-text="effectiveEmoji(d.effective)"></span>
+                </span>
+              </div>
+              <div class="grid grid-cols-2 gap-1.5 mt-3">
+                <select :value="d.personId || ''" @change="attachToPerson(d, $event.target.value)"
+                        class="bg-slate-800/70 border border-slate-700 rounded-lg px-2 py-1.5 text-xs">
+                  <option value="">No person</option>
+                  <template x-for="p in people" :key="'mp-'+d.ip+'-'+p.id">
+                    <option :value="p.id" x-text="(p.avatar || '') + ' ' + p.name"></option>
+                  </template>
+                </select>
+                <select :value="d.baseProfileId || ''" @change="setDeviceBaseProfile(d, $event.target.value)"
+                        class="bg-slate-800/70 border border-slate-700 rounded-lg px-2 py-1.5 text-xs">
+                  <option value="">No profile</option>
+                  <template x-for="p in profiles" :key="'mb-'+d.ip+'-'+p.id">
+                    <option :value="p.id" x-text="p.emoji + ' ' + p.label"></option>
+                  </template>
+                </select>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- DOMAINS / AUDIT (existing simplified) -->
+      <div x-show="tab==='domains'" class="grid lg:grid-cols-2 gap-4">
+        <div class="rounded-2xl ring-1 ring-white/5 bg-slate-900/60 backdrop-blur-sm p-4 sm:p-5">
+          <h2 class="text-sm font-medium text-slate-300 uppercase tracking-wider mb-3">🌍 Top domains</h2>
+          <ol class="divide-y divide-white/[0.04]">
+            <template x-for="(d, i) in topDomains" :key="'fd-'+d.name">
+              <li class="flex items-center gap-3 py-1.5">
+                <span class="text-xs text-slate-600 w-6 text-right tabular-nums" x-text="i+1"></span>
+                <span class="text-sm flex-1 truncate" x-text="d.name"></span>
+                <span class="text-xs text-slate-400 tabular-nums" x-text="formatNum(d.hits)"></span>
+              </li>
+            </template>
+          </ol>
+        </div>
+        <div class="rounded-2xl ring-1 ring-rose-400/10 bg-rose-950/20 backdrop-blur-sm p-4 sm:p-5">
+          <h2 class="text-sm font-medium text-rose-200 uppercase tracking-wider mb-3">🚫 Top blocked</h2>
+          <ol class="divide-y divide-rose-400/[0.06]">
+            <template x-for="(d, i) in topBlocked" :key="'fb-'+d.name">
+              <li class="flex items-center gap-3 py-1.5">
+                <span class="text-xs text-rose-400/80 w-6 text-right tabular-nums" x-text="i+1"></span>
+                <span class="text-sm flex-1 truncate" x-text="d.name"></span>
+                <span class="text-xs text-slate-400 tabular-nums" x-text="formatNum(d.hits)"></span>
+              </li>
+            </template>
+          </ol>
+        </div>
+      </div>
+
+      <div x-show="tab==='audit'" class="rounded-2xl ring-1 ring-white/5 bg-slate-900/60 backdrop-blur-sm p-4 sm:p-5">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-sm font-medium text-slate-300 uppercase tracking-wider">Audit log</h2>
+          <button @click="loadAudit()" class="text-[11px] text-slate-400 hover:text-slate-200">Reload</button>
+        </div>
+        <ul class="space-y-1">
+          <template x-for="row in audit" :key="'au-'+row.id">
+            <li class="flex items-center gap-3 py-1.5 px-2 rounded-lg hover:bg-white/[0.03] text-sm">
+              <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ring-1" :class="auditChip(row.action)" x-text="row.action"></span>
+              <span class="text-slate-300 flex-1 truncate">
+                <span x-show="row.ip" class="font-mono text-xs" x-text="row.ip"></span>
+                <span x-show="row.detail" class="text-slate-400">·</span>
+                <span x-show="row.detail" x-text="row.detail"></span>
+              </span>
+              <span class="text-[11px] text-slate-500" x-text="row.actor"></span>
+              <span class="text-[11px] text-slate-500" x-text="formatTs(row.ts)"></span>
+            </li>
+          </template>
+        </ul>
+      </div>
+
+      <!-- ============= SETTINGS ============= -->
+      <div x-show="tab==='settings'" class="space-y-4 sm:space-y-5">
+
+        <!-- Router integration -->
+        <section class="rounded-2xl ring-1 ring-white/5 bg-slate-900/60 backdrop-blur-sm p-4 sm:p-5">
+          <div class="flex items-start gap-3 mb-4">
+            <div class="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500/40 to-fuchsia-500/30 ring-1 ring-white/10 flex-none">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M5 7h14M5 17h14" />
+                <circle cx="9" cy="7"  r="0.8" fill="currentColor" />
+                <circle cx="15" cy="12" r="0.8" fill="currentColor" />
+                <circle cx="11" cy="17" r="0.8" fill="currentColor" />
+              </svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <h2 class="text-sm font-medium text-slate-200 uppercase tracking-wider">Router (ASUS)</h2>
+              <p class="text-xs text-slate-400 mt-1 leading-relaxed">
+                Connect your ASUS router to give the dashboard a true kill-switch.
+                Devices on the <span class="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 ring-1 ring-rose-400/30 text-[10px] font-medium">Internet Off</span>
+                profile are added to the router's MAC-based block list, defeating
+                hardcoded DNS and DoH bypasses (e.g. some Smart TVs).
+              </p>
+            </div>
+            <span class="text-[10px] uppercase tracking-wider px-2 py-1 rounded ring-1"
+                  :class="settings.router.enabled ? 'bg-emerald-500/15 text-emerald-300 ring-emerald-400/30' : 'bg-slate-700/40 text-slate-400 ring-white/5'"
+                  x-text="settings.router.enabled ? 'Enabled' : 'Disabled'"></span>
+          </div>
+
+          <div class="grid sm:grid-cols-2 gap-3">
+            <label class="block">
+              <span class="text-[11px] uppercase tracking-wider text-slate-400">Router IP / hostname</span>
+              <input x-model="settings.router.host"
+                     placeholder="192.168.1.1"
+                     class="mt-1 w-full bg-slate-950/60 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono"/>
+            </label>
+            <div class="grid grid-cols-3 gap-2">
+              <label class="block col-span-2">
+                <span class="text-[11px] uppercase tracking-wider text-slate-400">Scheme</span>
+                <select x-model="settings.router.scheme"
+                        class="mt-1 w-full bg-slate-950/60 border border-white/10 rounded-lg px-2 py-2 text-sm">
+                  <option value="http">http</option>
+                  <option value="https">https</option>
+                </select>
+              </label>
+              <label class="block">
+                <span class="text-[11px] uppercase tracking-wider text-slate-400">Port</span>
+                <input x-model.number="settings.router.port"
+                       type="number" placeholder="80" min="1" max="65535"
+                       class="mt-1 w-full bg-slate-950/60 border border-white/10 rounded-lg px-2 py-2 text-sm font-mono"/>
+              </label>
+            </div>
+            <label class="block">
+              <span class="text-[11px] uppercase tracking-wider text-slate-400">Username</span>
+              <input x-model="settings.router.username"
+                     placeholder="admin"
+                     autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+                     class="mt-1 w-full bg-slate-950/60 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono"/>
+            </label>
+            <label class="block">
+              <span class="text-[11px] uppercase tracking-wider text-slate-400">
+                Password
+                <span x-show="settings.router.passwordSet" class="ml-1 text-emerald-300/80">· saved</span>
+              </span>
+              <input x-model="settings.router.passwordInput"
+                     type="password"
+                     :placeholder="settings.router.passwordSet ? '••••••••  (leave blank to keep)' : 'router admin password'"
+                     autocomplete="new-password"
+                     class="mt-1 w-full bg-slate-950/60 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono"/>
+            </label>
+          </div>
+
+          <div class="mt-4 flex items-center justify-between gap-3">
+            <label class="inline-flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+              <input type="checkbox" x-model="settings.router.enabled"
+                     class="w-4 h-4 rounded border-white/20 bg-slate-950/60 accent-indigo-500"/>
+              Enable router enforcement
+            </label>
+            <div class="flex items-center gap-2">
+              <button @click="testRouter()" :disabled="settings.routerTesting"
+                      class="text-xs px-3 py-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 ring-1 ring-white/10 text-slate-200 disabled:opacity-50">
+                <span x-show="!settings.routerTesting">Test connection</span>
+                <span x-show="settings.routerTesting">Testing…</span>
+              </button>
+              <button @click="saveRouter()" :disabled="settings.routerSaving"
+                      class="text-xs px-3 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white font-medium disabled:opacity-50">
+                <span x-show="!settings.routerSaving">Save</span>
+                <span x-show="settings.routerSaving">Saving…</span>
+              </button>
+            </div>
+          </div>
+
+          <template x-if="settings.routerTestResult">
+            <div class="mt-4 rounded-xl px-3 py-2 text-xs ring-1"
+                 :class="settings.routerTestResult.ok
+                   ? 'bg-emerald-500/10 ring-emerald-400/30 text-emerald-200'
+                   : 'bg-rose-500/10 ring-rose-400/30 text-rose-200'">
+              <div class="font-medium" x-text="settings.routerTestResult.ok ? 'Connected' : 'Failed'"></div>
+              <div class="text-[11px] opacity-80 mt-0.5"
+                   x-text="settings.routerTestResult.message"></div>
+            </div>
+          </template>
+
+          <!-- Clients preview -->
+          <div class="mt-5" x-show="settings.router.enabled && settings.router.passwordSet">
+            <div class="flex items-center justify-between mb-2">
+              <h3 class="text-xs uppercase tracking-wider text-slate-400">Router clients</h3>
+              <button @click="loadRouterClients()" :disabled="settings.routerClientsLoading"
+                      class="text-[11px] text-slate-400 hover:text-slate-200 disabled:opacity-50">
+                <span x-show="!settings.routerClientsLoading">Refresh</span>
+                <span x-show="settings.routerClientsLoading">Loading…</span>
+              </button>
+            </div>
+            <template x-if="settings.routerClientsError">
+              <div class="rounded-lg bg-rose-500/10 ring-1 ring-rose-400/30 text-rose-200 px-3 py-2 text-xs"
+                   x-text="settings.routerClientsError"></div>
+            </template>
+            <template x-if="settings.routerClients !== null && settings.routerClients.length === 0">
+              <div class="text-xs text-slate-500 italic px-2 py-3">No clients reported yet.</div>
+            </template>
+            <template x-if="settings.routerClients !== null && settings.routerClients.length > 0">
+              <ul class="rounded-xl ring-1 ring-white/5 divide-y divide-white/5 overflow-hidden">
+                <template x-for="c in settings.routerClients" :key="c.mac">
+                  <li class="flex items-center gap-3 px-3 py-2 text-sm">
+                    <span class="w-2 h-2 rounded-full flex-none"
+                          :class="c.online ? 'bg-emerald-400' : 'bg-slate-600'"></span>
+                    <span class="flex-1 truncate" x-text="c.name || c.ip || c.mac"></span>
+                    <span class="font-mono text-[11px] text-slate-500" x-text="c.ip || ''"></span>
+                    <span class="font-mono text-[10px] text-slate-500" x-text="c.mac"></span>
+                    <span x-show="c.blocked"
+                          class="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 ring-1 ring-rose-400/30 uppercase tracking-wider">
+                      Blocked
+                    </span>
+                  </li>
+                </template>
+              </ul>
+            </template>
+          </div>
+        </section>
+
+        <!-- ============================== DNS Director ============================== -->
+        <section class="rounded-2xl ring-1 ring-white/5 bg-slate-900/60 backdrop-blur-sm p-4 sm:p-5"
+                 x-show="settings.router.enabled && settings.router.passwordSet">
+          <div class="flex items-start gap-3 mb-4">
+            <div class="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-sky-500/40 to-cyan-500/30 ring-1 ring-white/10 flex-none">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 12a8 8 0 1116 0 8 8 0 01-16 0z M12 4v16 M4 12h16"/>
+              </svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <h2 class="text-sm font-medium text-slate-200 uppercase tracking-wider">DNS Director</h2>
+              <p class="text-xs text-slate-400 mt-1 leading-relaxed">
+                Forces every device on a managed profile (kids, no-streaming,
+                no-YouTube, etc.) to use this dashboard for DNS — even if
+                they hardcode <span class="font-mono">8.8.8.8</span> on the
+                device. Devices on
+                <span class="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 ring-1 ring-rose-400/30 text-[10px]">Internet&nbsp;Off</span>
+                are skipped (already L2-blocked).
+              </p>
+            </div>
+            <span class="text-[10px] uppercase tracking-wider px-2 py-1 rounded ring-1"
+                  :class="settings.router.dnsDirectorEnabled ? 'bg-emerald-500/15 text-emerald-300 ring-emerald-400/30' : 'bg-slate-700/40 text-slate-400 ring-white/5'"
+                  x-text="settings.router.dnsDirectorEnabled ? 'Enabled' : 'Disabled'"></span>
+          </div>
+
+          <div class="grid sm:grid-cols-2 gap-3">
+            <label class="block">
+              <span class="text-[11px] uppercase tracking-wider text-slate-400">Redirect to (DNS server IP)</span>
+              <input x-model="settings.router.dnsDirectorIp"
+                     placeholder="192.168.4.254"
+                     class="mt-1 w-full bg-slate-950/60 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono"/>
+              <span class="text-[10px] text-slate-500 mt-1 block">
+                Usually this dashboard's own LAN IP.
+              </span>
+            </label>
+            <div class="flex items-end">
+              <label class="inline-flex items-center gap-2 text-sm text-slate-300 cursor-pointer pb-2">
+                <input type="checkbox" x-model="settings.router.dnsDirectorEnabled"
+                       class="w-4 h-4 rounded border-white/20 bg-slate-950/60 accent-sky-500"/>
+                Enable DNS Director (Stage 2)
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============================== SSH + DoH IP blocklist ============================== -->
+        <section class="rounded-2xl ring-1 ring-white/5 bg-slate-900/60 backdrop-blur-sm p-4 sm:p-5"
+                 x-show="settings.router.enabled && settings.router.passwordSet">
+          <div class="flex items-start gap-3 mb-4">
+            <div class="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-rose-500/40 to-orange-500/30 ring-1 ring-white/10 flex-none">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2 M9 11V8a3 3 0 016 0v3 M5 11h14v9H5z"/>
+              </svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <h2 class="text-sm font-medium text-slate-200 uppercase tracking-wider">DoH IP blocklist (SSH)</h2>
+              <p class="text-xs text-slate-400 mt-1 leading-relaxed">
+                Connects to your router over SSH and adds <code class="text-[10px] px-1 py-0.5 rounded bg-slate-800">iptables</code>
+                rules that drop traffic from managed devices to well-known DoH/DoT endpoints
+                (1.1.1.1, 8.8.8.8, 9.9.9.9, etc.). Catches Smart-TV apps with embedded DoH clients
+                that DNS Director alone can't stop.
+              </p>
+            </div>
+            <span class="text-[10px] uppercase tracking-wider px-2 py-1 rounded ring-1"
+                  :class="settings.router.dohBlockEnabled ? 'bg-emerald-500/15 text-emerald-300 ring-emerald-400/30' : 'bg-slate-700/40 text-slate-400 ring-white/5'"
+                  x-text="settings.router.dohBlockEnabled ? 'Enabled' : 'Disabled'"></span>
+          </div>
+
+          <div class="grid sm:grid-cols-3 gap-3">
+            <label class="block">
+              <span class="text-[11px] uppercase tracking-wider text-slate-400">SSH port</span>
+              <input x-model.number="settings.router.sshPort"
+                     type="number" placeholder="2222" min="1" max="65535"
+                     class="mt-1 w-full bg-slate-950/60 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono"/>
+            </label>
+            <label class="block sm:col-span-2">
+              <span class="text-[11px] uppercase tracking-wider text-slate-400">
+                SSH password
+                <span x-show="settings.router.sshPasswordSet" class="ml-1 text-emerald-300/80">· saved</span>
+                <span x-show="!settings.router.sshPasswordSet" class="ml-1 text-slate-500">(leave blank to use web-UI password)</span>
+              </span>
+              <input x-model="settings.router.sshPasswordInput"
+                     type="password"
+                     :placeholder="settings.router.sshPasswordSet ? '••••••••  (leave blank to keep)' : 'falls back to web-UI password'"
+                     autocomplete="new-password"
+                     class="mt-1 w-full bg-slate-950/60 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono"/>
+            </label>
+          </div>
+
+          <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <div class="flex flex-col gap-2">
+              <label class="inline-flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                <input type="checkbox" x-model="settings.router.sshEnabled"
+                       class="w-4 h-4 rounded border-white/20 bg-slate-950/60 accent-rose-500"/>
+                Enable SSH access
+              </label>
+              <label class="inline-flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                <input type="checkbox" x-model="settings.router.dohBlockEnabled"
+                       :disabled="!settings.router.sshEnabled"
+                       class="w-4 h-4 rounded border-white/20 bg-slate-950/60 accent-rose-500"/>
+                Enable DoH IP blocklist (Stage 3)
+              </label>
+            </div>
+            <button @click="testSsh()" :disabled="settings.sshTesting || !settings.router.sshEnabled"
+                    class="text-xs px-3 py-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 ring-1 ring-white/10 text-slate-200 disabled:opacity-50">
+              <span x-show="!settings.sshTesting">Test SSH</span>
+              <span x-show="settings.sshTesting">Testing…</span>
+            </button>
+          </div>
+
+          <template x-if="settings.sshTestResult">
+            <div class="mt-4 rounded-xl px-3 py-2 text-xs ring-1"
+                 :class="settings.sshTestResult.ok
+                   ? 'bg-emerald-500/10 ring-emerald-400/30 text-emerald-200'
+                   : 'bg-rose-500/10 ring-rose-400/30 text-rose-200'">
+              <div class="font-medium" x-text="settings.sshTestResult.ok ? 'SSH connected' : 'SSH failed'"></div>
+              <div class="text-[11px] opacity-80 mt-0.5" x-text="settings.sshTestResult.message"></div>
+              <template x-if="settings.sshTestResult.ok && settings.sshTestResult.router">
+                <dl class="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[10px] text-emerald-200/80">
+                  <dt>model</dt><dd x-text="settings.sshTestResult.router.model"></dd>
+                  <dt>kernel</dt><dd x-text="settings.sshTestResult.router.kernel"></dd>
+                  <dt>ipset</dt><dd x-text="settings.sshTestResult.router.hasIpset"></dd>
+                  <dt>xt_set</dt><dd x-text="settings.sshTestResult.iptablesMatchSet ? 'yes' : 'NO'"></dd>
+                  <dt>our chain</dt><dd x-text="settings.sshTestResult.router.ourChainExists"></dd>
+                  <dt>our rules</dt><dd x-text="settings.sshTestResult.router.ourRules"></dd>
+                </dl>
+              </template>
+            </div>
+          </template>
+        </section>
+
+        <!-- ============================== Apply now / live status ============================== -->
+        <section class="rounded-2xl ring-1 ring-white/5 bg-slate-900/40 p-4 sm:p-5"
+                 x-show="settings.router.enabled && settings.router.passwordSet">
+          <div class="flex items-center justify-between gap-3">
+            <div>
+              <h3 class="text-xs uppercase tracking-wider text-slate-400">Apply now</h3>
+              <p class="text-[11px] text-slate-500 mt-0.5">Force a reconcile tick instead of waiting up to 60 seconds.</p>
+            </div>
+            <button @click="applyNow()" :disabled="settings.applying"
+                    class="text-xs px-3 py-2 rounded-lg bg-emerald-500/90 hover:bg-emerald-400 text-emerald-950 font-medium disabled:opacity-50">
+              <span x-show="!settings.applying">Apply now</span>
+              <span x-show="settings.applying">Applying…</span>
+            </button>
+          </div>
+          <template x-if="settings.applyResult">
+            <div class="mt-3 rounded-xl px-3 py-2 text-xs ring-1 bg-slate-800/40 ring-white/5 space-y-2">
+              <div class="font-medium text-slate-200">Last reconcile result</div>
+              <!-- Stage 1 -->
+              <div class="flex items-start gap-2">
+                <span class="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 ring-1 ring-rose-400/30 text-[10px] font-mono">Stage&nbsp;1</span>
+                <div class="flex-1">
+                  <div x-text="settings.applyResult.router?.enabled
+                    ? `MAC blocking: ${(settings.applyResult.router.blocked||[]).length} device(s) blocked at L2`
+                    : 'Router disabled'"
+                       class="text-slate-300"></div>
+                </div>
+              </div>
+              <!-- Stage 2 -->
+              <div class="flex items-start gap-2">
+                <span class="px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 ring-1 ring-sky-400/30 text-[10px] font-mono">Stage&nbsp;2</span>
+                <div class="flex-1">
+                  <div x-show="settings.applyResult.router?.dnsDirector?.enabled" class="text-slate-300"
+                       x-text="`DNS Director: ${(settings.applyResult.router.dnsDirector.redirected||[]).length} device(s) redirected to ${settings.applyResult.router.dnsDirector.customIp}`"></div>
+                  <div x-show="!settings.applyResult.router?.dnsDirector?.enabled" class="text-slate-500">Disabled</div>
+                  <div x-show="settings.applyResult.router?.dnsDirector?.error" class="text-rose-300"
+                       x-text="settings.applyResult.router.dnsDirector.error"></div>
+                </div>
+              </div>
+              <!-- Stage 3 -->
+              <div class="flex items-start gap-2">
+                <span class="px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-300 ring-1 ring-orange-400/30 text-[10px] font-mono">Stage&nbsp;3</span>
+                <div class="flex-1">
+                  <div x-show="settings.applyResult.router?.dohBlock?.enabled" class="text-slate-300"
+                       x-text="settings.applyResult.router.dohBlock.error
+                         ? settings.applyResult.router.dohBlock.error
+                         : `DoH blocklist: ${(settings.applyResult.router.dohBlock.macs||[]).length} device(s), ${settings.applyResult.router.dohBlock.added||0} fresh rules`"></div>
+                  <div x-show="!settings.applyResult.router?.dohBlock?.enabled" class="text-slate-500">Disabled</div>
+                </div>
+              </div>
+            </div>
+          </template>
+        </section>
+
+        <!-- Helpful explainer -->
+        <section class="rounded-2xl ring-1 ring-white/5 bg-slate-900/40 p-4 sm:p-5 text-xs text-slate-400 leading-relaxed">
+          <h3 class="text-[11px] uppercase tracking-wider text-slate-300 mb-2">How the three stages stack up</h3>
+          <ol class="space-y-2 pl-1">
+            <li>
+              <span class="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 ring-1 ring-rose-400/30 text-[10px] font-mono mr-1.5">Stage&nbsp;1</span>
+              <strong class="text-slate-300">MAC-based "Internet Off"</strong> — the dashboard mirrors the
+              <em>Internet Off</em> profile into the router's
+              <strong>Block Internet Access</strong> list. Defeats hardcoded DNS / DoH / VPN attempts because
+              the firewall drops everything at the MAC layer before it leaves the LAN.
+            </li>
+            <li>
+              <span class="px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 ring-1 ring-sky-400/30 text-[10px] font-mono mr-1.5">Stage&nbsp;2</span>
+              <strong class="text-slate-300">DNS Director (per-MAC redirect)</strong> — for any device on a
+              <em>managed</em> profile (kids/no-streaming/no-YouTube/default), the router transparently
+              rewrites all port-53 traffic to this dashboard, so a Smart-TV typing in
+              <span class="font-mono">8.8.8.8</span> still gets filtered answers.
+            </li>
+            <li>
+              <span class="px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-300 ring-1 ring-orange-400/30 text-[10px] font-mono mr-1.5">Stage&nbsp;3</span>
+              <strong class="text-slate-300">DoH IP blocklist (SSH+iptables)</strong> — adds firewall drops
+              from each managed MAC to a curated list of well-known DoH/DoT endpoints (Cloudflare, Google,
+              Quad9, AdGuard, OpenDNS, etc.) on TCP/443, UDP/443 and TCP/853. Catches apps that embed their
+              own DoH client.
+            </li>
+          </ol>
+          <p class="mt-3 text-slate-500 text-[11px]">
+            Credentials are encrypted at rest. All router rules created by the dashboard are tagged so they
+            can be cleanly removed without ever touching anything you've added by hand. Router push is
+            best-effort — DNS-level enforcement keeps running even if the router is unreachable.
+          </p>
+        </section>
+      </div>
+    </section>
+
+    <footer class="text-center text-xs text-slate-500 pt-4 pb-4">
+      Guardium DNS · Parental controls for Technitium · <a :href="`http://${location.hostname}:5380/`" target="_blank" class="hover:text-slate-300">DNS console</a>
+    </footer>
+  </main>
+
+  <!-- mobile bottom nav (only in techie view) -->
+  <nav class="md:hidden fixed bottom-0 inset-x-0 z-30 bg-slate-950/85 backdrop-blur-xl ring-1 ring-white/5 border-t border-white/[0.06] pb-[env(safe-area-inset-bottom)]"
+       x-show="view==='techie'">
+    <div class="grid grid-cols-5 max-w-md mx-auto">
+      <button @click="tab='overview'" :class="bottomNavClass('overview')">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12l9-9 9 9M5 10v10h4v-6h6v6h4V10" /></svg>
+        <span class="text-[10px] mt-0.5">Overview</span>
+      </button>
+      <button @click="tab='devices'" :class="bottomNavClass('devices')">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17h6M5 17H4a1 1 0 01-1-1V6a1 1 0 011-1h16a1 1 0 011 1v10a1 1 0 01-1 1h-1M8 21h8" /></svg>
+        <span class="text-[10px] mt-0.5">Devices</span>
+      </button>
+      <button @click="tab='domains'" :class="bottomNavClass('domains')">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0zM12 3v18M3 12h18" /></svg>
+        <span class="text-[10px] mt-0.5">Domains</span>
+      </button>
+      <button @click="tab='audit'" :class="bottomNavClass('audit')">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2M9 12h6m-6 4h4" /></svg>
+        <span class="text-[10px] mt-0.5">Audit</span>
+      </button>
+      <button @click="openSettings()" :class="bottomNavClass('settings')">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+        <span class="text-[10px] mt-0.5">Settings</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- ============= PERSON DRAWER ============= -->
+  <div x-show="personDrawer.open" x-transition.opacity class="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm" @click="closePerson()"></div>
+  <aside x-show="personDrawer.open" x-transition.translate.x.300ms
+         class="fixed top-0 right-0 z-50 w-full sm:max-w-2xl h-full bg-slate-950 ring-1 ring-white/10 shadow-2xl flex flex-col"
+         @keydown.escape.window="closePerson()">
+    <template x-if="personDrawer.person">
+      <div class="flex-1 flex flex-col overflow-hidden">
+        <div class="px-4 sm:px-5 py-4 border-b border-white/5 flex items-start gap-3">
+          <div class="flex items-center justify-center w-14 h-14 rounded-2xl text-3xl ring-1 ring-white/10 flex-none"
+               :class="personGradient(personDrawer.person)">
+            <span x-text="personDrawer.person.avatar || personInitials(personDrawer.person)"></span>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="text-xl font-semibold truncate" x-text="personDrawer.person.name"></div>
+            <div class="text-[11px] text-slate-400 mt-0.5 flex items-center gap-2 flex-wrap">
+              <span x-text="personDrawer.person.deviceCount + (personDrawer.person.deviceCount === 1 ? ' device' : ' devices')"></span>
+              <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded ring-1" :class="effectiveChip(personDrawer.person.effective)">
+                <span x-text="effectiveEmoji(personDrawer.person.effective)"></span>
+                <span x-text="effectiveLabel(personDrawer.person.effective)"></span>
+              </span>
+              <span x-show="personDrawer.person.effective.expiresAt">
+                until <span x-text="formatTime(personDrawer.person.effective.expiresAt * 1000)"></span>
+              </span>
+            </div>
+          </div>
+          <button @click="editPerson(personDrawer.person)" title="Edit"
+                  class="text-[11px] px-2 py-1 rounded-lg ring-1 ring-white/10 hover:bg-white/5">Edit</button>
+          <button @click="closePerson()" class="text-slate-400 hover:text-white text-2xl leading-none w-8 h-8 inline-flex items-center justify-center">&times;</button>
+        </div>
+
+        <div class="flex-1 overflow-auto px-4 sm:px-5 py-4 space-y-5">
+
+          <!-- One-tap actions -->
+          <section>
+            <h3 class="text-xs uppercase tracking-wider text-slate-400 mb-2">Right now</h3>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <button @click="quickPausePerson(personDrawer.person, 30)"
+                      class="rounded-xl bg-rose-500/15 hover:bg-rose-500/25 ring-1 ring-rose-400/30 text-rose-200 px-3 py-3 text-sm font-medium">
+                ⏸ Pause 30m
+              </button>
+              <button @click="quickPausePerson(personDrawer.person, 60)"
+                      class="rounded-xl bg-rose-500/15 hover:bg-rose-500/25 ring-1 ring-rose-400/30 text-rose-200 px-3 py-3 text-sm font-medium">
+                ⏸ Pause 1h
+              </button>
+              <button @click="endOfDayPerson(personDrawer.person)"
+                      class="rounded-xl bg-slate-800 hover:bg-slate-700 ring-1 ring-white/5 text-slate-200 px-3 py-3 text-sm font-medium">
+                🌙 Off till tomorrow
+              </button>
+              <button @click="resumePerson(personDrawer.person)"
+                      class="rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 ring-1 ring-emerald-400/30 text-emerald-200 px-3 py-3 text-sm font-medium">
+                ▶ Resume
+              </button>
+            </div>
+          </section>
+
+          <!-- Base profile -->
+          <section>
+            <h3 class="text-xs uppercase tracking-wider text-slate-400 mb-2">Default rules</h3>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <template x-for="p in profiles" :key="'pp-'+p.id">
+                <button @click="setPersonProfile(personDrawer.person, p.id)"
+                        :class="personDrawer.person.baseProfileId===p.id ? profileChipActive(p.id) : 'bg-slate-800/70 ring-white/5 text-slate-300 hover:bg-slate-700/70'"
+                        class="text-sm px-3 py-2.5 rounded-xl ring-1 inline-flex items-center gap-1.5 transition">
+                  <span class="text-base" x-text="p.emoji"></span>
+                  <span x-text="p.short || p.label"></span>
+                </button>
+              </template>
+              <button @click="setPersonProfile(personDrawer.person, null)"
+                      :class="!personDrawer.person.baseProfileId ? 'bg-slate-700 ring-white/15 text-slate-200' : 'bg-slate-800/40 ring-white/5 text-slate-400 hover:bg-slate-700/50'"
+                      class="text-sm px-3 py-2.5 rounded-xl ring-1 inline-flex items-center gap-1.5">
+                <span class="text-base">·</span><span>None</span>
+              </button>
+            </div>
+            <p class="text-[11px] text-slate-500 mt-2">
+              The default rules apply unless a schedule, daily limit, or pause says otherwise.
+            </p>
+          </section>
+
+          <!-- Devices in this person -->
+          <section>
+            <div class="flex items-center justify-between mb-2">
+              <h3 class="text-xs uppercase tracking-wider text-slate-400">Devices</h3>
+              <span class="text-[11px] text-slate-500" x-text="personDrawer.person.deviceCount + ' total'"></span>
+            </div>
+            <div class="rounded-xl ring-1 ring-white/5 bg-slate-900/60 divide-y divide-white/5" x-show="personDrawer.person.devices && personDrawer.person.devices.length">
+              <template x-for="d in personDrawer.person.devices" :key="'pd-'+d.ip">
+                <div class="flex items-center gap-3 px-3 py-2.5">
+                  <span :class="d.online ? 'bg-emerald-400' : 'bg-slate-600'" class="w-2 h-2 rounded-full flex-none"></span>
+                  <div class="flex-1 min-w-0">
+                    <div class="text-sm font-medium truncate" x-text="d.label || d.hostname || d.ip"></div>
+                    <div class="text-[11px] text-slate-500 truncate font-mono" x-text="d.ip + ' · ' + formatMinutes(d.todayMinutes) + ' today'"></div>
+                  </div>
+                  <button @click="detachDevice(d.ip)" class="text-[11px] text-slate-500 hover:text-rose-300">Remove</button>
+                </div>
+              </template>
+            </div>
+            <div x-show="!personDrawer.person.devices || !personDrawer.person.devices.length" class="text-sm text-slate-500 italic">
+              No devices assigned. Pick from below:
+            </div>
+            <select @change="if($event.target.value) attachToPerson({ip:$event.target.value}, personDrawer.person.id); $event.target.value=''"
+                    class="mt-2 w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm">
+              <option value="">+ Add a device to <span x-text="personDrawer.person.name"></span></option>
+              <template x-for="d in unassignedDevices()" :key="'add-'+d.ip">
+                <option :value="d.ip" x-text="(d.label || d.hostname || d.ip) + ' (' + d.ip + ')'"></option>
+              </template>
+            </select>
+          </section>
+
+          <!-- Schedules -->
+          <section>
+            <div class="flex items-center justify-between mb-2">
+              <h3 class="text-xs uppercase tracking-wider text-slate-400">Schedules</h3>
+              <button @click="openScheduleEditor(null, 'person', personDrawer.person.id)"
+                      class="text-[11px] px-2 py-1 rounded-lg ring-1 ring-indigo-400/30 bg-indigo-500/10 text-indigo-200 hover:bg-indigo-500/20">
+                + New schedule
+              </button>
+            </div>
+            <div class="rounded-xl ring-1 ring-white/5 bg-slate-900/60 divide-y divide-white/5" x-show="personDrawer.person.schedules && personDrawer.person.schedules.length">
+              <template x-for="s in personDrawer.person.schedules" :key="'sc-'+s.id">
+                <div class="flex items-center gap-3 px-3 py-2.5">
+                  <button @click="toggleSchedule(s)"
+                          :class="s.enabled ? 'bg-emerald-500/20 text-emerald-300 ring-emerald-400/40' : 'bg-slate-800 text-slate-500 ring-white/5'"
+                          class="w-9 h-5 rounded-full ring-1 inline-flex items-center px-0.5 relative transition">
+                    <span :class="s.enabled ? 'translate-x-4' : 'translate-x-0'" class="block w-4 h-4 rounded-full bg-white transition-transform"></span>
+                  </button>
+                  <div class="flex-1 min-w-0">
+                    <div class="text-sm font-medium" x-text="s.name || 'Schedule'"></div>
+                    <div class="text-[11px] text-slate-400" x-text="weekdayLabel(s.weekdayMask) + ' · ' + formatHM(s.startMin) + ' to ' + formatHM(s.endMin) + ' · ' + (profileLabel(s.profileId) || 'Internet off')"></div>
+                  </div>
+                  <button @click="openScheduleEditor(s, 'person', personDrawer.person.id)" class="text-[11px] text-slate-400 hover:text-slate-200">Edit</button>
+                  <button @click="deleteSchedule(s)" class="text-[11px] text-slate-500 hover:text-rose-300">Delete</button>
+                </div>
+              </template>
+            </div>
+            <div x-show="!personDrawer.person.schedules || !personDrawer.person.schedules.length" class="text-sm text-slate-500 italic">
+              No schedules yet. Use a preset or "+ New schedule".
+            </div>
+            <div class="flex flex-wrap gap-2 mt-2">
+              <button @click="addSchedulePreset(personDrawer.person, 'bedtime')" class="text-[11px] px-2 py-1 rounded-lg bg-slate-800/70 ring-1 ring-white/5 hover:bg-slate-700/70">🌙 Bedtime 9pm-7am</button>
+              <button @click="addSchedulePreset(personDrawer.person, 'school')" class="text-[11px] px-2 py-1 rounded-lg bg-slate-800/70 ring-1 ring-white/5 hover:bg-slate-700/70">📚 School hours</button>
+              <button @click="addSchedulePreset(personDrawer.person, 'dinner')" class="text-[11px] px-2 py-1 rounded-lg bg-slate-800/70 ring-1 ring-white/5 hover:bg-slate-700/70">🍝 Dinner 6-7pm</button>
+            </div>
+          </section>
+
+          <!-- Quotas -->
+          <section>
+            <div class="flex items-center justify-between mb-2">
+              <h3 class="text-xs uppercase tracking-wider text-slate-400">Daily limit</h3>
+              <button @click="openQuotaEditor(null, 'person', personDrawer.person.id)"
+                      class="text-[11px] px-2 py-1 rounded-lg ring-1 ring-indigo-400/30 bg-indigo-500/10 text-indigo-200 hover:bg-indigo-500/20"
+                      x-show="!personDrawer.person.quotas || !personDrawer.person.quotas.length">
+                + Set a daily limit
+              </button>
+            </div>
+            <div class="rounded-xl ring-1 ring-white/5 bg-slate-900/60 divide-y divide-white/5" x-show="personDrawer.person.quotas && personDrawer.person.quotas.length">
+              <template x-for="q in personDrawer.person.quotas" :key="'q-'+q.id">
+                <div class="px-3 py-3">
+                  <div class="flex items-center gap-3">
+                    <button @click="toggleQuota(q)"
+                            :class="q.enabled ? 'bg-emerald-500/20 text-emerald-300 ring-emerald-400/40' : 'bg-slate-800 text-slate-500 ring-white/5'"
+                            class="w-9 h-5 rounded-full ring-1 inline-flex items-center px-0.5 transition">
+                      <span :class="q.enabled ? 'translate-x-4' : 'translate-x-0'" class="block w-4 h-4 rounded-full bg-white transition-transform"></span>
+                    </button>
+                    <div class="flex-1 min-w-0">
+                      <div class="text-sm font-medium">
+                        <span x-text="formatMinutes(q.minutesMax) + ' / day'"></span>
+                      </div>
+                      <div class="text-[11px] text-slate-400" x-text="weekdayLabel(q.weekdayMask) + ' · then ' + (profileLabel(q.profileWhenExceeded) || 'Internet off')"></div>
+                    </div>
+                    <button @click="openQuotaEditor(q, 'person', personDrawer.person.id)" class="text-[11px] text-slate-400 hover:text-slate-200">Edit</button>
+                    <button @click="deleteQuota(q)" class="text-[11px] text-slate-500 hover:text-rose-300">Delete</button>
+                  </div>
+                  <div class="mt-3">
+                    <div class="flex items-center justify-between text-[11px] mb-1">
+                      <span class="text-slate-300" x-text="formatMinutes(personDrawer.person.todayMinutes) + ' used today'"></span>
+                      <span class="text-slate-500" x-text="formatMinutes(Math.max(0, q.minutesMax - personDrawer.person.todayMinutes)) + ' left'"></span>
+                    </div>
+                    <div class="h-2 rounded-full bg-slate-800 overflow-hidden">
+                      <div class="h-full rounded-full"
+                           :class="quotaBarFor(q, personDrawer.person.todayMinutes)"
+                           :style="'width:' + Math.min(100, (personDrawer.person.todayMinutes / q.minutesMax) * 100) + '%'"></div>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+            <div x-show="!personDrawer.person.quotas || !personDrawer.person.quotas.length" class="text-sm text-slate-500 italic">
+              No daily limit set. Add one and the dashboard will switch them off automatically when they hit it.
+            </div>
+          </section>
+
+        </div>
+      </div>
+    </template>
+  </aside>
+
+  <!-- ============= SCHEDULE EDITOR ============= -->
+  <div x-show="scheduleDrawer.open" x-transition.opacity class="fixed inset-0 z-[55] bg-black/70" @click="closeScheduleEditor()"></div>
+  <div x-show="scheduleDrawer.open" x-transition.translate.y.300ms
+       class="fixed inset-x-0 bottom-0 sm:bottom-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 z-[60] sm:max-w-lg sm:w-full bg-slate-950 ring-1 ring-white/10 sm:rounded-2xl rounded-t-2xl shadow-2xl"
+       @keydown.escape.window="closeScheduleEditor()">
+    <div class="px-4 sm:px-5 py-4 border-b border-white/5 flex items-center gap-3">
+      <div class="text-xl">🕒</div>
+      <div class="flex-1">
+        <div class="text-base font-semibold" x-text="scheduleDrawer.id ? 'Edit schedule' : 'New schedule'"></div>
+        <div class="text-[11px] text-slate-400" x-text="scheduleScopeLabel()"></div>
+      </div>
+      <button @click="closeScheduleEditor()" class="text-slate-400 hover:text-white text-2xl leading-none w-8 h-8 inline-flex items-center justify-center">&times;</button>
+    </div>
+    <div class="px-4 sm:px-5 py-4 space-y-4">
+      <div>
+        <label class="block text-xs text-slate-400 mb-1.5">Name (optional)</label>
+        <input type="text" x-model="scheduleDrawer.name" placeholder="e.g. Bedtime"
+               class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm" />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-400 mb-1.5">Days</label>
+        <div class="grid grid-cols-7 gap-1">
+          <template x-for="(d, i) in ['M','T','W','T','F','S','S']" :key="'wd-'+i">
+            <button @click="toggleScheduleWeekday(i)"
+                    :class="scheduleDrawer.weekdayMask & (1<<i) ? 'bg-indigo-500/30 text-indigo-50 ring-indigo-300/40' : 'bg-slate-800/70 text-slate-400 ring-white/5'"
+                    class="py-2 rounded-lg ring-1 text-sm font-medium" x-text="d"></button>
+          </template>
+        </div>
+        <div class="flex gap-1.5 mt-2">
+          <button @click="setScheduleWeekdays(0x1F)" class="text-[11px] px-2 py-1 rounded bg-slate-800/70 ring-1 ring-white/5">Weekdays</button>
+          <button @click="setScheduleWeekdays(0x60)" class="text-[11px] px-2 py-1 rounded bg-slate-800/70 ring-1 ring-white/5">Weekends</button>
+          <button @click="setScheduleWeekdays(0x7F)" class="text-[11px] px-2 py-1 rounded bg-slate-800/70 ring-1 ring-white/5">Every day</button>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-slate-400 mb-1.5">From</label>
+          <input type="time" :value="minToHHMM(scheduleDrawer.startMin)"
+                 @change="scheduleDrawer.startMin = hhmmToMin($event.target.value)"
+                 class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-base" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1.5">Until</label>
+          <input type="time" :value="minToHHMM(scheduleDrawer.endMin)"
+                 @change="scheduleDrawer.endMin = hhmmToMin($event.target.value)"
+                 class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-base" />
+        </div>
+      </div>
+      <p class="text-[11px] text-slate-500" x-show="scheduleDrawer.endMin <= scheduleDrawer.startMin && scheduleDrawer.endMin !== scheduleDrawer.startMin">
+        Tip: ending before starting means it wraps past midnight (e.g. 9pm → 7am).
+      </p>
+      <div>
+        <label class="block text-xs text-slate-400 mb-1.5">During this window, internet is</label>
+        <div class="grid grid-cols-2 gap-1.5">
+          <button @click="scheduleDrawer.profileId = null"
+                  :class="!scheduleDrawer.profileId ? 'bg-rose-500/30 text-rose-50 ring-rose-300/40' : 'bg-slate-800/70 text-slate-300 ring-white/5'"
+                  class="text-sm px-3 py-2 rounded-lg ring-1 inline-flex items-center justify-center gap-1.5">
+            <span>⛔</span><span>Off</span>
+          </button>
+          <template x-for="p in profiles" :key="'sp-'+p.id">
+            <button @click="scheduleDrawer.profileId = p.id"
+                    :class="scheduleDrawer.profileId===p.id ? profileChipActive(p.id) : 'bg-slate-800/70 ring-white/5 text-slate-300'"
+                    class="text-sm px-3 py-2 rounded-lg ring-1 inline-flex items-center justify-center gap-1.5">
+              <span x-text="p.emoji"></span><span x-text="p.short || p.label"></span>
+            </button>
+          </template>
+        </div>
+      </div>
+    </div>
+    <div class="px-4 sm:px-5 py-3 border-t border-white/5 flex items-center gap-2">
+      <button @click="deleteSchedule({id: scheduleDrawer.id})" x-show="scheduleDrawer.id"
+              class="px-3 py-2 rounded-lg text-rose-300 hover:bg-rose-500/10 ring-1 ring-rose-400/20 text-sm">Delete</button>
+      <div class="flex-1"></div>
+      <button @click="closeScheduleEditor()" class="px-3 py-2 rounded-lg text-slate-300 hover:bg-white/5 text-sm">Cancel</button>
+      <button @click="saveSchedule()"
+              class="px-4 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-medium">Save</button>
+    </div>
+  </div>
+
+  <!-- ============= QUOTA EDITOR ============= -->
+  <div x-show="quotaDrawer.open" x-transition.opacity class="fixed inset-0 z-[55] bg-black/70" @click="closeQuotaEditor()"></div>
+  <div x-show="quotaDrawer.open" x-transition.translate.y.300ms
+       class="fixed inset-x-0 bottom-0 sm:bottom-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 z-[60] sm:max-w-lg sm:w-full bg-slate-950 ring-1 ring-white/10 sm:rounded-2xl rounded-t-2xl shadow-2xl"
+       @keydown.escape.window="closeQuotaEditor()">
+    <div class="px-4 sm:px-5 py-4 border-b border-white/5 flex items-center gap-3">
+      <div class="text-xl">⏱️</div>
+      <div class="flex-1">
+        <div class="text-base font-semibold" x-text="quotaDrawer.id ? 'Edit daily limit' : 'New daily limit'"></div>
+        <div class="text-[11px] text-slate-400" x-text="quotaScopeLabel()"></div>
+      </div>
+      <button @click="closeQuotaEditor()" class="text-slate-400 hover:text-white text-2xl leading-none w-8 h-8 inline-flex items-center justify-center">&times;</button>
+    </div>
+    <div class="px-4 sm:px-5 py-4 space-y-4">
+      <div>
+        <label class="block text-xs text-slate-400 mb-1.5">Maximum time per day</label>
+        <div class="text-3xl font-bold text-indigo-200" x-text="formatMinutes(quotaDrawer.minutesMax)"></div>
+        <input type="range" min="15" max="720" step="15" x-model.number="quotaDrawer.minutesMax"
+               class="w-full mt-2 accent-indigo-400" />
+        <div class="flex justify-between text-[10px] text-slate-500 mt-0.5">
+          <span>15m</span><span>2h</span><span>4h</span><span>6h</span><span>12h</span>
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs text-slate-400 mb-1.5">Apply on</label>
+        <div class="grid grid-cols-7 gap-1">
+          <template x-for="(d, i) in ['M','T','W','T','F','S','S']" :key="'qd-'+i">
+            <button @click="toggleQuotaWeekday(i)"
+                    :class="quotaDrawer.weekdayMask & (1<<i) ? 'bg-indigo-500/30 text-indigo-50 ring-indigo-300/40' : 'bg-slate-800/70 text-slate-400 ring-white/5'"
+                    class="py-2 rounded-lg ring-1 text-sm font-medium" x-text="d"></button>
+          </template>
+        </div>
+        <div class="flex gap-1.5 mt-2">
+          <button @click="setQuotaWeekdays(0x1F)" class="text-[11px] px-2 py-1 rounded bg-slate-800/70 ring-1 ring-white/5">School days</button>
+          <button @click="setQuotaWeekdays(0x60)" class="text-[11px] px-2 py-1 rounded bg-slate-800/70 ring-1 ring-white/5">Weekends</button>
+          <button @click="setQuotaWeekdays(0x7F)" class="text-[11px] px-2 py-1 rounded bg-slate-800/70 ring-1 ring-white/5">Every day</button>
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs text-slate-400 mb-1.5">When the limit's hit, internet is</label>
+        <div class="grid grid-cols-2 gap-1.5">
+          <button @click="quotaDrawer.profileWhenExceeded = null"
+                  :class="!quotaDrawer.profileWhenExceeded ? 'bg-rose-500/30 text-rose-50 ring-rose-300/40' : 'bg-slate-800/70 text-slate-300 ring-white/5'"
+                  class="text-sm px-3 py-2 rounded-lg ring-1 inline-flex items-center justify-center gap-1.5">
+            <span>⛔</span><span>Off</span>
+          </button>
+          <template x-for="p in profiles" :key="'qp-'+p.id">
+            <button @click="quotaDrawer.profileWhenExceeded = p.id"
+                    :class="quotaDrawer.profileWhenExceeded===p.id ? profileChipActive(p.id) : 'bg-slate-800/70 ring-white/5 text-slate-300'"
+                    class="text-sm px-3 py-2 rounded-lg ring-1 inline-flex items-center justify-center gap-1.5">
+              <span x-text="p.emoji"></span><span x-text="p.short || p.label"></span>
+            </button>
+          </template>
+        </div>
+      </div>
+    </div>
+    <div class="px-4 sm:px-5 py-3 border-t border-white/5 flex items-center gap-2">
+      <button @click="deleteQuota({id: quotaDrawer.id})" x-show="quotaDrawer.id"
+              class="px-3 py-2 rounded-lg text-rose-300 hover:bg-rose-500/10 ring-1 ring-rose-400/20 text-sm">Delete</button>
+      <div class="flex-1"></div>
+      <button @click="closeQuotaEditor()" class="px-3 py-2 rounded-lg text-slate-300 hover:bg-white/5 text-sm">Cancel</button>
+      <button @click="saveQuota()" class="px-4 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-medium">Save</button>
+    </div>
+  </div>
+
+  <!-- ============= PERSON EDITOR (create/edit) ============= -->
+  <div x-show="personEditor.open" x-transition.opacity class="fixed inset-0 z-[55] bg-black/70" @click="closePersonEditor()"></div>
+  <div x-show="personEditor.open" x-transition.translate.y.300ms
+       class="fixed inset-x-0 bottom-0 sm:bottom-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 z-[60] sm:max-w-md sm:w-full bg-slate-950 ring-1 ring-white/10 sm:rounded-2xl rounded-t-2xl shadow-2xl"
+       @keydown.escape.window="closePersonEditor()">
+    <div class="px-4 sm:px-5 py-4 border-b border-white/5 flex items-center gap-3">
+      <div class="text-xl">👤</div>
+      <div class="flex-1 text-base font-semibold" x-text="personEditor.id ? 'Edit person' : 'New person'"></div>
+      <button @click="closePersonEditor()" class="text-slate-400 hover:text-white text-2xl leading-none w-8 h-8 inline-flex items-center justify-center">&times;</button>
+    </div>
+    <div class="px-4 sm:px-5 py-4 space-y-4">
+      <div>
+        <label class="block text-xs text-slate-400 mb-1.5">Name</label>
+        <input type="text" x-model="personEditor.name" placeholder="e.g. Liam"
+               class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-base" autofocus />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-400 mb-1.5">Avatar</label>
+        <div class="grid grid-cols-8 gap-1">
+          <template x-for="e in ['🧒','👦','👧','🧑','👨','👩','👶','👴','👵','🐱','🐶','🦊','🐼','🦁','🦄','🤖']" :key="'av-'+e">
+            <button @click="personEditor.avatar = e"
+                    :class="personEditor.avatar===e ? 'bg-indigo-500/30 ring-indigo-300/40' : 'bg-slate-800/70 ring-white/5 hover:bg-slate-700/70'"
+                    class="text-2xl py-2 rounded-lg ring-1" x-text="e"></button>
+          </template>
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs text-slate-400 mb-1.5">Color</label>
+        <div class="grid grid-cols-7 gap-2">
+          <template x-for="c in ['indigo','sky','emerald','amber','rose','pink','purple']" :key="'col-'+c">
+            <button @click="personEditor.color = c" type="button"
+                    :class="['w-9 h-9 rounded-full ring-2', personEditor.color===c ? 'ring-white' : 'ring-transparent', 'bg-' + c + '-500']"></button>
+          </template>
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs text-slate-400 mb-1.5">Default rules</label>
+        <select x-model="personEditor.baseProfileId" class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm">
+          <option :value="null">No default (uses catch-all)</option>
+          <template x-for="p in profiles" :key="'pep-'+p.id">
+            <option :value="p.id" x-text="p.emoji + '  ' + p.label"></option>
+          </template>
+        </select>
+      </div>
+    </div>
+    <div class="px-4 sm:px-5 py-3 border-t border-white/5 flex items-center gap-2">
+      <button @click="deletePerson()" x-show="personEditor.id"
+              class="px-3 py-2 rounded-lg text-rose-300 hover:bg-rose-500/10 ring-1 ring-rose-400/20 text-sm">Delete</button>
+      <div class="flex-1"></div>
+      <button @click="closePersonEditor()" class="px-3 py-2 rounded-lg text-slate-300 hover:bg-white/5 text-sm">Cancel</button>
+      <button @click="savePerson()" class="px-4 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-medium">Save</button>
+    </div>
+  </div>
+
+  <!-- ============= FAMILY-PAUSE PROMPT ============= -->
+  <div x-show="familyPauseDialog.open" x-transition.opacity class="fixed inset-0 z-[55] bg-black/70" @click="familyPauseDialog.open=false"></div>
+  <div x-show="familyPauseDialog.open"
+       class="fixed inset-x-0 bottom-0 sm:bottom-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 z-[60] sm:max-w-md sm:w-full bg-slate-950 ring-1 ring-white/10 sm:rounded-2xl rounded-t-2xl shadow-2xl">
+    <div class="px-4 sm:px-5 py-4 border-b border-white/5 flex items-center gap-3">
+      <div class="text-xl">🍝</div>
+      <div class="flex-1 text-base font-semibold">Pause everyone</div>
+      <button @click="familyPauseDialog.open=false" class="text-slate-400 hover:text-white text-2xl leading-none w-8 h-8 inline-flex items-center justify-center">&times;</button>
+    </div>
+    <div class="px-4 sm:px-5 py-4 space-y-4">
+      <div>
+        <label class="block text-xs text-slate-400 mb-1.5">For how long</label>
+        <div class="grid grid-cols-4 gap-1.5">
+          <template x-for="m in [15,30,60,120]" :key="'fp-'+m">
+            <button @click="familyPauseDialog.minutes = m"
+                    :class="familyPauseDialog.minutes===m ? 'bg-indigo-500/30 ring-indigo-300/40 text-indigo-50' : 'bg-slate-800/70 ring-white/5 text-slate-300'"
+                    class="py-2 rounded-lg ring-1 text-sm font-medium" x-text="formatMinutes(m)"></button>
+          </template>
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs text-slate-400 mb-1.5">Don't pause</label>
+        <div class="space-y-1.5 max-h-40 overflow-y-auto">
+          <template x-for="p in people" :key="'fpe-'+p.id">
+            <label class="flex items-center gap-2 py-1 px-2 rounded hover:bg-white/5 cursor-pointer">
+              <input type="checkbox" :value="p.id" :checked="familyPauseDialog.excludePersonIds.includes(p.id)"
+                     @change="toggleFamilyPauseExclude(p.id)" class="accent-indigo-400" />
+              <span x-text="(p.avatar || '') + ' ' + p.name"></span>
+            </label>
+          </template>
+          <div x-show="!people.length" class="text-sm text-slate-500 italic">No people configured.</div>
+        </div>
+      </div>
+    </div>
+    <div class="px-4 sm:px-5 py-3 border-t border-white/5 flex items-center gap-2">
+      <div class="flex-1"></div>
+      <button @click="familyPauseDialog.open=false" class="px-3 py-2 rounded-lg text-slate-300 hover:bg-white/5 text-sm">Cancel</button>
+      <button @click="confirmFamilyPause()" class="px-4 py-2 rounded-lg bg-rose-500 hover:bg-rose-400 text-white text-sm font-medium">Pause now</button>
+    </div>
+  </div>
+
+  <!-- ============= ASSIGN DEVICE (person OR profile) ============= -->
+  <div x-show="assignDrawer.open" x-transition.opacity class="fixed inset-0 z-[55] bg-black/70" @click="closeAssign()"></div>
+  <div x-show="assignDrawer.open" x-transition.translate.y.300ms
+       class="fixed inset-x-0 bottom-0 sm:bottom-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 z-[60] sm:max-w-2xl sm:w-full bg-slate-950 ring-1 ring-white/10 sm:rounded-2xl rounded-t-2xl shadow-2xl max-h-[92vh] flex flex-col"
+       @keydown.escape.window="closeAssign()">
+    <div class="px-4 sm:px-5 py-4 border-b border-white/5 flex items-start gap-3 flex-none">
+      <div class="flex items-center justify-center w-11 h-11 rounded-xl text-2xl ring-1 ring-white/10 bg-slate-900 flex-none">
+        <span x-text="assignDrawer.device ? (assignDrawer.device.baseProfileId ? profileEmoji(assignDrawer.device.baseProfileId) : '📱') : '📱'"></span>
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="text-base font-semibold truncate" x-text="assignDrawer.device ? displayName(assignDrawer.device) : ''"></div>
+        <div class="text-[11px] text-slate-500 truncate font-mono" x-text="assignDrawer.device ? assignDrawer.device.ip : ''"></div>
+      </div>
+      <button @click="closeAssign()" class="text-slate-400 hover:text-white text-2xl leading-none w-8 h-8 inline-flex items-center justify-center flex-none">&times;</button>
+    </div>
+
+    <div class="flex-1 overflow-y-auto px-4 sm:px-5 py-4 space-y-5">
+      <!-- PERSON section -->
+      <section x-show="people.length">
+        <h3 class="text-xs uppercase tracking-wider text-slate-400 mb-2">Belongs to a person?</h3>
+        <div class="grid grid-cols-3 sm:grid-cols-4 gap-2">
+          <template x-for="p in people" :key="'ap-'+p.id">
+            <button @click="assignDevicePerson(p.id)"
+                    class="flex flex-col items-center gap-1.5 px-2 py-3 rounded-xl ring-1 ring-white/5 bg-slate-900/60 hover:ring-indigo-300/40 hover:bg-slate-800/70 transition active:scale-95">
+              <div class="flex items-center justify-center w-12 h-12 rounded-xl text-2xl ring-1 ring-white/10" :class="personGradient(p)">
+                <span x-text="p.avatar || personInitials(p)"></span>
+              </div>
+              <span class="text-xs font-medium text-slate-200 truncate w-full text-center" x-text="p.name"></span>
+            </button>
+          </template>
+          <button @click="openCreatePerson(); closeAssign()"
+                  class="flex flex-col items-center gap-1.5 px-2 py-3 rounded-xl ring-1 ring-dashed ring-white/10 bg-slate-950/40 hover:ring-indigo-300/40 hover:bg-slate-900/60 text-slate-400">
+            <div class="flex items-center justify-center w-12 h-12 rounded-xl text-xl ring-1 ring-white/5 bg-slate-800/40">+</div>
+            <span class="text-xs">New person</span>
+          </button>
+        </div>
+      </section>
+
+      <div x-show="people.length" class="flex items-center gap-3 text-[11px] uppercase tracking-wider text-slate-500">
+        <div class="flex-1 h-px bg-white/5"></div>
+        <span>or pick rules directly</span>
+        <div class="flex-1 h-px bg-white/5"></div>
+      </div>
+
+      <!-- PROFILE section -->
+      <section>
+        <h3 class="text-xs uppercase tracking-wider text-slate-400 mb-2" x-show="!people.length">Pick rules for this device</h3>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <template x-for="p in profiles" :key="'apr-'+p.id">
+            <button @click="assignDeviceProfile(p.id)"
+                    :class="assignDrawer.device && assignDrawer.device.baseProfileId === p.id ? 'ring-2 ring-indigo-400/60 ' + profileGradient(p.id) : 'ring-1 ring-white/5 bg-slate-900/60 hover:ring-white/10 hover:bg-slate-900'"
+                    class="text-left rounded-xl p-3 transition active:scale-[0.99]">
+              <div class="flex items-start gap-2.5">
+                <div class="flex items-center justify-center w-10 h-10 rounded-lg text-xl ring-1 ring-white/10 flex-none" :class="profileGradient(p.id)">
+                  <span x-text="p.emoji"></span>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm font-semibold truncate" x-text="p.label"></div>
+                  <div class="text-[11px] text-slate-400 leading-snug mt-0.5 line-clamp-2" x-text="p.tagline || p.description"></div>
+                </div>
+              </div>
+            </button>
+          </template>
+        </div>
+      </section>
+    </div>
+
+    <div class="px-4 sm:px-5 py-3 border-t border-white/5 flex items-center gap-2 flex-none">
+      <button @click="clearAssignment()" x-show="assignDrawer.device && (assignDrawer.device.personId || assignDrawer.device.baseProfileId)"
+              class="text-[11px] text-slate-400 hover:text-rose-300 px-2 py-1.5 rounded-lg ring-1 ring-white/5">Clear all rules</button>
+      <button @click="(() => { const d = assignDrawer.device; closeAssign(); openDiagnose(d); })()"
+              x-show="assignDrawer.device"
+              class="text-[11px] text-slate-300 hover:text-emerald-300 px-2 py-1.5 rounded-lg ring-1 ring-white/5 inline-flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12h4l3-9 4 18 3-9h4" /></svg>
+        Diagnose
+      </button>
+      <div class="flex-1"></div>
+      <button @click="closeAssign()" class="px-3 py-2 rounded-lg text-slate-300 hover:bg-white/5 text-sm">Done</button>
+    </div>
+  </div>
+
+  <!-- ============= DIAGNOSE DEVICE ============= -->
+  <div x-show="diagnose.open" x-transition.opacity class="fixed inset-0 z-[55] bg-black/70" @click="closeDiagnose()"></div>
+  <div x-show="diagnose.open" x-transition.translate.y.300ms
+       class="fixed inset-x-0 bottom-0 sm:bottom-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 z-[60] sm:max-w-2xl sm:w-full bg-slate-950 ring-1 ring-white/10 sm:rounded-2xl rounded-t-2xl shadow-2xl max-h-[92vh] flex flex-col"
+       @keydown.escape.window="closeDiagnose()">
+    <div class="px-4 sm:px-5 py-4 border-b border-white/5 flex items-start gap-3 flex-none">
+      <div class="flex items-center justify-center w-11 h-11 rounded-xl text-2xl ring-1 ring-white/10 bg-slate-900 flex-none">
+        <svg class="w-5 h-5 text-emerald-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12h4l3-9 4 18 3-9h4" /></svg>
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="text-base font-semibold truncate" x-text="diagnose.label || diagnose.ip || ''"></div>
+        <div class="text-[11px] text-slate-500 truncate font-mono" x-text="diagnose.ip"></div>
+      </div>
+      <button @click="refreshDiagnose()" :disabled="diagnose.loading"
+              class="text-[11px] text-slate-300 hover:text-white px-2 py-1.5 rounded-lg ring-1 ring-white/5 disabled:opacity-50">
+        <span x-text="diagnose.loading ? 'Refreshing…' : 'Refresh'"></span>
+      </button>
+      <button @click="closeDiagnose()" class="text-slate-400 hover:text-white text-2xl leading-none w-8 h-8 inline-flex items-center justify-center flex-none">&times;</button>
+    </div>
+
+    <div class="flex-1 overflow-y-auto px-4 sm:px-5 py-4 space-y-4">
+
+      <template x-if="diagnose.loading && !diagnose.data">
+        <div class="text-center text-sm text-slate-400 py-8">Reading DNS activity…</div>
+      </template>
+
+      <template x-if="diagnose.data">
+        <div class="space-y-4">
+
+          <!-- VERDICT BANNER -->
+          <div class="rounded-xl ring-1 px-4 py-3" :class="diagnoseChip(diagnose.data.verdict.status)">
+            <div class="flex items-start gap-3">
+              <div class="text-xl leading-tight" x-text="diagnoseEmoji(diagnose.data.verdict.status)"></div>
+              <div class="flex-1 min-w-0">
+                <div class="font-semibold text-sm" x-text="diagnose.data.verdict.title"></div>
+                <div class="text-[12px] mt-1 leading-snug opacity-90" x-text="diagnose.data.verdict.detail"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- PROFILE SUMMARY -->
+          <div class="rounded-xl ring-1 ring-white/5 bg-slate-900/40 p-3">
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Profile in effect</div>
+            <div class="flex items-center gap-2 flex-wrap">
+              <template x-if="diagnose.data.effectiveProfileId">
+                <span class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium ring-1"
+                      :class="profileChip(diagnose.data.effectiveProfileId)">
+                  <span x-text="profileEmoji(diagnose.data.effectiveProfileId)"></span>
+                  <span x-text="profileLabel(diagnose.data.effectiveProfileId) || diagnose.data.effectiveProfileId"></span>
+                </span>
+              </template>
+              <template x-if="!diagnose.data.effectiveProfileId">
+                <span class="text-xs text-slate-400 italic">No profile applied</span>
+              </template>
+              <span class="text-[11px] text-slate-500" x-show="diagnose.data.liveProfileId">
+                via Technitium group <code class="text-slate-300" x-text="diagnose.data.liveProfileId"></code>
+              </span>
+            </div>
+            <template x-if="diagnose.data.router">
+              <div class="mt-2 text-[11px] flex items-center gap-2 flex-wrap">
+                <template x-if="diagnose.data.router.blockedAtRouter">
+                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded ring-1 bg-emerald-500/15 text-emerald-300 ring-emerald-400/30">
+                    🛡️ Router enforcement on
+                    <code class="text-[10px] opacity-70" x-text="diagnose.data.router.deviceMac"></code>
+                  </span>
+                </template>
+                <template x-if="diagnose.data.router && !diagnose.data.router.blockedAtRouter && diagnose.data.router.configured && !diagnose.data.router.error">
+                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded ring-1 bg-amber-500/10 text-amber-300 ring-amber-400/30">
+                    ⌛ Router push pending
+                    <span class="opacity-70" x-text="diagnose.data.router.note || 'next reconcile tick will apply'"></span>
+                  </span>
+                </template>
+                <template x-if="diagnose.data.router && diagnose.data.router.error">
+                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded ring-1 bg-rose-500/10 text-rose-300 ring-rose-400/30">
+                    ⚠ Router error: <span class="opacity-80" x-text="diagnose.data.router.error"></span>
+                  </span>
+                </template>
+                <template x-if="diagnose.data.router && diagnose.data.router.configured === false">
+                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded ring-1 bg-slate-700/40 text-slate-400 ring-white/5">
+                    Router enforcement disabled — see Settings
+                  </span>
+                </template>
+              </div>
+            </template>
+          </div>
+
+          <!-- STATS GRID -->
+          <div class="grid grid-cols-3 gap-2">
+            <div class="rounded-xl ring-1 ring-white/5 bg-slate-900/40 px-3 py-2.5 text-center">
+              <div class="text-2xl font-semibold tabular-nums" x-text="diagnose.data.summary.totalRecent"></div>
+              <div class="text-[10px] uppercase tracking-wider text-slate-500">recent queries</div>
+            </div>
+            <div class="rounded-xl ring-1 ring-rose-400/15 bg-rose-500/5 px-3 py-2.5 text-center">
+              <div class="text-2xl font-semibold tabular-nums text-rose-300" x-text="diagnose.data.summary.blocked"></div>
+              <div class="text-[10px] uppercase tracking-wider text-rose-300/70">blocked</div>
+            </div>
+            <div class="rounded-xl ring-1 ring-emerald-400/15 bg-emerald-500/5 px-3 py-2.5 text-center">
+              <div class="text-2xl font-semibold tabular-nums text-emerald-300"
+                   x-text="(diagnose.data.summary.recursive || 0) + (diagnose.data.summary.cached || 0)"></div>
+              <div class="text-[10px] uppercase tracking-wider text-emerald-300/70">allowed</div>
+            </div>
+          </div>
+
+          <!-- RELEVANT BLOCKED FOR THE PROFILE -->
+          <template x-if="diagnose.data.expectedBlockPatterns.length">
+            <div class="rounded-xl ring-1 ring-white/5 bg-slate-900/40 p-3">
+              <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-2">
+                Profile-relevant queries
+              </div>
+              <template x-if="diagnose.data.matching.blocked.length">
+                <div>
+                  <div class="text-[11px] text-emerald-300 mb-1">Blocked (working as expected):</div>
+                  <ul class="space-y-1">
+                    <template x-for="e in diagnose.data.matching.blocked" :key="'mb-'+e.ts+'-'+e.qname">
+                      <li class="flex items-center gap-2 text-[12px]">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-none"></span>
+                        <span class="font-mono truncate" x-text="e.qname"></span>
+                        <span class="ml-auto text-[10px] text-slate-500" x-text="e.ts && e.ts.slice(11,19)"></span>
+                      </li>
+                    </template>
+                  </ul>
+                </div>
+              </template>
+              <template x-if="diagnose.data.matching.allowed.length">
+                <div class="mt-2">
+                  <div class="text-[11px] text-rose-300 mb-1">Allowed despite profile (potential bypass):</div>
+                  <ul class="space-y-1">
+                    <template x-for="e in diagnose.data.matching.allowed" :key="'ma-'+e.ts+'-'+e.qname">
+                      <li class="flex items-center gap-2 text-[12px]">
+                        <span class="w-1.5 h-1.5 rounded-full bg-rose-400 flex-none"></span>
+                        <span class="font-mono truncate" x-text="e.qname"></span>
+                        <span class="ml-auto text-[10px] text-slate-500" x-text="e.responseType"></span>
+                      </li>
+                    </template>
+                  </ul>
+                </div>
+              </template>
+              <template x-if="!diagnose.data.matching.blocked.length && !diagnose.data.matching.allowed.length">
+                <div class="text-[12px] text-slate-400 italic">
+                  No queries for the profile's category yet. The device hasn't asked DNS for those domains since the rule was applied.
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <!-- RECENT BLOCKED (any) -->
+          <template x-if="diagnose.data.recentBlocked.length">
+            <div class="rounded-xl ring-1 ring-white/5 bg-slate-900/40 p-3">
+              <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Recently blocked (all categories)</div>
+              <ul class="space-y-1">
+                <template x-for="e in diagnose.data.recentBlocked" :key="'rb-'+e.ts+'-'+e.qname">
+                  <li class="flex items-center gap-2 text-[12px]">
+                    <span class="w-1.5 h-1.5 rounded-full bg-rose-400/80 flex-none"></span>
+                    <span class="font-mono truncate" x-text="e.qname"></span>
+                    <span class="ml-auto text-[10px] text-slate-500" x-text="e.ts && e.ts.slice(11,19)"></span>
+                  </li>
+                </template>
+              </ul>
+            </div>
+          </template>
+
+          <!-- TROUBLESHOOTING TIPS -->
+          <details class="rounded-xl ring-1 ring-white/5 bg-slate-900/40 p-3">
+            <summary class="text-[11px] uppercase tracking-wider text-slate-500 cursor-pointer">Tips when a rule isn't blocking</summary>
+            <ul class="text-[12px] text-slate-300 mt-2 space-y-1.5 leading-relaxed">
+              <li>• Force-quit the relevant app on the device, then re-open. Apps cache DNS results aggressively.</li>
+              <li>• Toggle Wi-Fi off/on on the device to flush its OS-level DNS cache.</li>
+              <li>• Smart TVs / Chromecasts often hardcode 8.8.8.8 — they'll bypass DNS rules unless your router blocks outbound port 53 and 853 to anywhere except the Technitium server.</li>
+              <li>• If you see "Allowed despite profile" above, the device is bypassing DNS — check for app-level DoH (Chrome / Firefox / iOS Private Relay) and disable it in the device's settings.</li>
+            </ul>
+          </details>
+        </div>
+      </template>
+    </div>
+
+    <div class="px-4 sm:px-5 py-3 border-t border-white/5 flex items-center gap-2 flex-none">
+      <div class="flex-1"></div>
+      <button @click="closeDiagnose()" class="px-3 py-2 rounded-lg text-slate-300 hover:bg-white/5 text-sm">Close</button>
+    </div>
+  </div>
+
+  <!-- ============= QUERY INSPECTOR (existing) ============= -->
+  <div x-show="inspector.open" x-transition.opacity class="fixed inset-0 z-40 bg-black/70" @click="closeQueries()"></div>
+  <aside x-show="inspector.open" x-transition.translate.x.300ms
+         class="fixed top-0 right-0 z-50 w-full sm:max-w-3xl h-full bg-slate-900 ring-1 ring-white/10 shadow-2xl flex flex-col"
+         @keydown.escape.window="closeQueries()">
+    <div class="px-4 sm:px-5 py-4 border-b border-white/5 flex items-start gap-3">
+      <div class="flex items-center justify-center w-11 h-11 rounded-xl text-2xl ring-1 ring-white/10"
+           :class="inspector.device ? profileGradient(inspector.device.profileId) : 'bg-slate-800'">
+        <span x-text="inspector.device ? profileEmoji(inspector.device.profileId) : '·'"></span>
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="text-[10px] uppercase tracking-wider text-slate-400">DNS query log</div>
+        <div class="text-base sm:text-lg font-semibold truncate" x-text="inspector.device ? displayName(inspector.device) : ''"></div>
+        <div class="text-[11px] text-slate-500 truncate">
+          <span x-show="inspector.device" class="font-mono" x-text="inspector.device ? inspector.device.ip : ''"></span>
+        </div>
+      </div>
+      <button @click="loadQueries()" :disabled="inspector.loading"
+              class="text-[11px] px-2 py-1 rounded-lg ring-1 ring-white/10 hover:bg-white/5 disabled:opacity-50">
+        <span x-text="inspector.loading ? 'Loading' : 'Refresh'"></span>
+      </button>
+      <button @click="closeQueries()" class="text-slate-400 hover:text-white text-2xl leading-none w-8 h-8 inline-flex items-center justify-center">&times;</button>
+    </div>
+    <div class="px-4 sm:px-5 py-2.5 flex items-center gap-3 border-b border-white/5 text-xs text-slate-300">
+      <span>Total: <strong class="tabular-nums" x-text="inspector.totalEntries ?? 0"></strong></span>
+      <span class="text-rose-300">Blocked: <strong class="tabular-nums" x-text="inspector.blockedInPage ?? 0"></strong></span>
+      <span class="text-emerald-300">Allowed: <strong class="tabular-nums" x-text="(inspector.entries.length || 0) - (inspector.blockedInPage || 0)"></strong></span>
+    </div>
+    <div class="overflow-auto flex-1 px-2 py-2">
+      <ul x-show="inspector.entries.length" class="space-y-0.5">
+        <template x-for="e in inspector.entries" :key="(e.timestamp||'')+(e.qname||'')+(e.qtype||'')">
+          <li class="flex items-start gap-2 px-2 py-1.5 rounded hover:bg-white/[0.04]">
+            <span :class="rcodeClass(e.rcode)" class="text-[10px] px-1.5 py-0.5 rounded ring-1 uppercase tracking-wider mt-0.5 flex-none" x-text="e.rcode || '?'"></span>
+            <div class="flex-1 min-w-0">
+              <div class="text-xs font-mono break-all" x-text="e.qname"></div>
+              <div class="text-[10px] text-slate-500 mt-0.5">
+                <span x-text="e.qtype"></span> · <span x-text="formatTime(e.timestamp)"></span>
+                <span x-show="e.answer && formatAnswer(e.answer) !== '—'"> → <span class="text-slate-400" x-text="formatAnswer(e.answer)"></span></span>
+              </div>
+            </div>
+          </li>
+        </template>
+      </ul>
+      <div x-show="!inspector.entries.length && !inspector.loading" class="text-center text-sm text-slate-400 py-12 px-4">
+        No DNS queries logged for this device yet.
+      </div>
+    </div>
+  </aside>
+
+  <script src="/assets/app.js"></script>
+</body>
+</html>

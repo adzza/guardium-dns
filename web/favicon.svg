@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Guardium DNS">
+  <defs>
+    <linearGradient id="dnsdash-bg" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#d946ef"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" ry="8" fill="url(#dnsdash-bg)"/>
+  <g fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" transform="translate(4 4)">
+    <path d="M12 21l-7.5-4.33V7.33L12 3l7.5 4.33v9.34L12 21z"/>
+    <path d="M9.5 12.5l1.8 1.8 3.7-4"/>
+  </g>
+</svg>
