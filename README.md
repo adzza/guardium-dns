@@ -47,16 +47,6 @@ up. Everything runs on your own hardware, on your own network.
 > run UniFi and want to help test, [open an issue](../../issues/new) so I
 > can ping you when the first build lands.
 
-This project exists because the author wanted a sane way to:
-
-- protect his kids from things they shouldn't see online,
-- enforce reasonable screen-time and category-based rules,
-- and actually *win* the cat-and-mouse game against smart TVs, consoles and
-  phones that ignore DHCP-provided DNS or use DNS-over-HTTPS (DoH) to bypass
-  filtering entirely.
-
-If that resonates with you, you're in the right place.
-
 ---
 
 ## Hardware & router compatibility
