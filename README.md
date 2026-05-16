@@ -41,17 +41,37 @@ If that resonates with you, you're in the right place.
 
 ## Screenshots
 
-> Screenshots coming soon — placeholders below describe what each view shows.
-> If you'd like to contribute screenshots from your own deployment (sensitive
-> labels redacted), open a PR against `docs/screenshots/`.
+The mobile-first **Family view** is what most parents will live in. The
+**Techie view** (same data, denser tables, charts) is also available with a
+tap.
 
-| View | What it shows |
-|---|---|
-| **Overview** | Active devices, top talkers, top domains, top blocked, query rate over time, daily/weekly trends. |
-| **Devices** | One row per LAN device with hostname, vendor (MAC OUI), inferred device type, current profile, and quick actions. |
-| **Profiles** | The six built-in profiles plus your custom edits, with category breakdowns and per-profile schedules. |
-| **People** | Group devices into household members and apply rules per person rather than per IP. |
-| **Settings → Router** | Configure ASUS router integration (Stages 1–3) with an encrypted credential vault. |
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/overview.png"><img src="docs/screenshots/overview.png" alt="Family overview" /></a>
+      <p align="center"><sub><b>Family overview</b> — devices online, blocked-query counter, "Pause for dinner", people and per-profile device groups (here "No&nbsp;YouTube" is active on three devices, including the household's Google TV).</sub></p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/devices-list.png"><img src="docs/screenshots/devices-list.png" alt="Devices needing rules" /></a>
+      <p align="center"><sub><b>Devices needing rules</b> — every IP without a person or profile assignment is surfaced for one-tap "Assign". Below, a live feed of the most-blocked domains in the last day.</sub></p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/profile-picker.png"><img src="docs/screenshots/profile-picker.png" alt="Profile picker" /></a>
+      <p align="center"><sub><b>Profile picker</b> — assign any of the seven built-in profiles (or your own custom ones) to a single device. Each profile maps directly to a group in the Technitium Advanced Blocking app.</sub></p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/person-detail.png"><img src="docs/screenshots/person-detail.png" alt="Person detail with schedules and quotas" /></a>
+      <p align="center"><sub><b>Person detail</b> — a single household member with all their devices, a base profile, recurring schedules (bedtime, school hours, dinner), and an optional daily quota that auto-cuts the internet when hit.</sub></p>
+    </td>
+  </tr>
+</table>
+
+> Screenshots are from the author's home deployment, taken on iOS Safari
+> over Tailscale. If you'd like to contribute screenshots from a different
+> network (sensitive labels redacted), open a PR against
+> `docs/screenshots/`.
 
 ---
 

@@ -36,7 +36,9 @@ state/
 *.swp
 *.swo
 *~
-.cursor/
+# Cursor: ignore everything except shared project rules
+.cursor/*
+!.cursor/rules/
 
 # --- OS ---
 .DS_Store

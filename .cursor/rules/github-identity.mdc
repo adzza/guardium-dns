@@ -1,0 +1,59 @@
+---
+description: Always use the adzza personal GitHub identity for this repo. Never Policy-Pass.
+alwaysApply: true
+---
+
+# GitHub identity for guardium-dns
+
+This repo is **`github.com/adzza/guardium-dns`** under the personal **`adzza`** account.
+The machine also has a `Policy-Pass` work account in `gh`. **The two must never mix.**
+
+## Required identity for this repo
+
+- Author name: `adzza`
+- Author email: `39549273+adzza@users.noreply.github.com`
+- Remote `origin`: `https://github.com/adzza/guardium-dns.git`
+- Local credential helper for `https://github.com` resolves via `gh auth token -u adzza`
+
+## Verify before every commit
+
+```bash
+git config --local user.name        # MUST be: adzza
+git config --local user.email       # MUST be: 39549273+adzza@users.noreply.github.com
+git remote get-url origin           # MUST contain: adzza/guardium-dns
+```
+
+If any check fails, fix **locally only** — never with `--global`:
+
+```bash
+git config user.name "adzza"
+git config user.email "39549273+adzza@users.noreply.github.com"
+```
+
+## Forbidden in this repo
+
+- `git config --global ...` — would touch the Policy-Pass default.
+- `gh auth setup-git` — installs a global credential helper that can leak Policy-Pass creds.
+- `gh repo create` under any owner other than `adzza`.
+- Authoring commits as `Adam Hucker` or `devops@policypass.education`.
+- Switching `gh auth switch` to Policy-Pass and pushing from there.
+
+## If a commit slips through as Policy-Pass
+
+Amend before push (nothing public yet) — never force-push to remote `main` afterwards:
+
+```bash
+git commit --amend --reset-author --no-edit
+```
+
+## Pushing
+
+The local credential helper handles auth automatically:
+
+```bash
+git push origin HEAD
+```
+
+The active `gh` account does not matter — the helper always pulls the adzza token.
+After any work, ensure `gh auth status` still shows Policy-Pass as Active so other
+projects on this machine are unaffected: `gh auth switch -u Policy-Pass`.
