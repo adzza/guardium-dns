@@ -75,8 +75,15 @@ from . import overrides as ov
 from . import profiles
 from .hostnames import HostnameResolver
 from .reconciler import Reconciler, trace_to_dict
-from .router_asus import AsusRouterClient, AsusRouterError, detect_router_endpoint
-from .router_ssh import AsusSshClient, AsusSshError, SshConfig
+from .routers.asus import (
+    AsusRouterClient,
+    AsusRouterError,
+    AsusSshClient,
+    AsusSshError,
+    SshConfig,
+    detect_router_endpoint,
+)
+from .routers.registry import get_adapter as get_router_adapter
 from .sampler import Sampler
 from .store import Store
 from .technitium import TechnitiumClient, TechnitiumConfig, TechnitiumError
@@ -268,8 +275,7 @@ async def lifespan(app: FastAPI):
         app.state.reconciler = Reconciler(
             store,
             app.state.service_client,
-            router_factory=build_router_client,
-            ssh_factory=build_ssh_config,
+            adapter_factory=lambda: get_router_adapter(store, secrets),
         )
         app.state.sampler = Sampler(store, app.state.service_client)
         await app.state.reconciler.start()

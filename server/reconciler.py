@@ -10,6 +10,8 @@ The reconciler also:
 - Records *new* schedule and quota overrides into ``device_overrides`` when
   they fire, so the UI can show "internet-off until 06:00" without recomputing.
 - Garbage-collects expired overrides.
+- Mirrors Stage 1 / Stage 2 / Stage 3 state into whichever router the user
+  has configured, via the vendor-agnostic :mod:`server.routers` adapter.
 
 Service token requirement: the reconciler talks to Technitium with a
 "service" token (configured via ``TECHNITIUM_SERVICE_TOKEN`` in the env
@@ -20,7 +22,6 @@ once and shuts down -- in that mode the dashboard falls back to direct
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from datetime import datetime
 from typing import Any, Callable
@@ -29,20 +30,12 @@ from . import fingerprint as fp
 from . import oui
 from . import overrides as ov
 from . import profiles as prof
-from .router_asus import AsusRouterClient, AsusRouterError
-from .router_ssh import AsusSshClient, AsusSshError, SshConfig
+from .routers.base import RouterAdapter
 from .store import Store
 from .technitium import TechnitiumClient, TechnitiumError
 
 
-# Settings keys where we remember exactly what we last asked the router
-# to do, so we can remove just our own entries without touching anything
-# the user added by hand in the router web UI.
-MANAGED_MACS_KEY = "router.asus.managed_macs"
-MANAGED_DNS_KEY  = "router.asus.managed_dns_macs"
-MANAGED_DOH_KEY  = "router.asus.managed_doh_macs"
-
-# Profiles that DON'T need DNS Director:
+# Profiles that DON'T need DNS Director or DoH block:
 #   - unrestricted: nothing to enforce.
 #   - internet-off: the MAC is fully blocked at L2 already.
 #   - None / no profile: no override required.
@@ -76,20 +69,14 @@ class Reconciler:
         store: Store,
         client: TechnitiumClient,
         *,
-        router_factory: Callable[[], AsusRouterClient | None] | None = None,
-        ssh_factory: Callable[..., SshConfig | None] | None = None,
+        adapter_factory: Callable[[], RouterAdapter | None] | None = None,
     ) -> None:
         self.store = store
         self.client = client
-        self._router_factory = router_factory
-        self._ssh_factory = ssh_factory
+        self._adapter_factory = adapter_factory
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
         self._last_status: dict[str, Any] = {"runs": 0}
-        # Set of MACs we last asked the router to block. Used to skip
-        # redundant pushes if nothing changed.
-        self._last_router_pushed: tuple[str, ...] | None = None
-        self._last_doh_pushed: tuple[str, ...] | None = None
 
     async def start(self) -> None:
         if self._task is not None:
@@ -145,8 +132,8 @@ class Reconciler:
         #    fetch the live MAC<->IP map BEFORE the override engine runs.
         #    The same session is reused by all router stages later in the
         #    tick, so we make exactly one login round-trip per minute.
-        router: AsusRouterClient | None = (
-            self._router_factory() if self._router_factory is not None else None
+        adapter: RouterAdapter | None = (
+            self._adapter_factory() if self._adapter_factory is not None else None
         )
         ip_to_mac: dict[str, str] = {}
         mac_to_name: dict[str, str] = {}
@@ -154,23 +141,23 @@ class Reconciler:
         router_open_error: str | None = None
 
         async with AsyncExitStack() as stack:
-            if router is not None:
+            if adapter is not None:
                 try:
-                    await stack.enter_async_context(router)
+                    await stack.enter_async_context(adapter)
                 except Exception as exc:  # noqa: BLE001
                     log.warning("reconciler: cannot open router session: %s", exc)
                     router_open_error = str(exc)
-                    router = None
+                    adapter = None
 
-            if router is not None:
+            if adapter is not None:
                 try:
-                    clients = await router.list_clients()
+                    clients = await adapter.list_clients()
                     for c in clients:
                         if c.ip:
                             ip_to_mac[c.ip] = c.mac
                         if c.name:
                             mac_to_name[c.mac] = c.name
-                except AsusRouterError as exc:
+                except Exception as exc:  # noqa: BLE001
                     log.warning("reconciler: list_clients failed: %s", exc)
 
             # 3. Follow MAC across DHCP changes. This rewrites device-row
@@ -183,7 +170,7 @@ class Reconciler:
             return await self._tick_inner(
                 now_local=now_local,
                 now_utc=now_utc,
-                router=router,
+                adapter=adapter,
                 ip_to_mac=ip_to_mac,
                 mac_to_name=mac_to_name,
                 migrations=migrations,
@@ -195,7 +182,7 @@ class Reconciler:
         *,
         now_local: datetime,
         now_utc: int,
-        router: AsusRouterClient | None,
+        adapter: RouterAdapter | None,
         ip_to_mac: dict[str, str],
         mac_to_name: dict[str, str],
         migrations: list[dict[str, Any]],
@@ -265,11 +252,11 @@ class Reconciler:
             log.exception("apply step failed")
             applied = {"changed": 0, "error": True}
 
-        # 6. Mirror state into the router firewall (if configured).
-        # Failures are non-fatal -- DNS-level enforcement already ran above.
+        # 6. Mirror state into the router (if configured). Failures are
+        #    non-fatal -- DNS-level enforcement already ran above.
         try:
             router_status = await self._apply_router(
-                effective, devices, router=router,
+                effective, devices, adapter=adapter,
                 ip_to_mac=ip_to_mac, mac_to_name=mac_to_name,
             )
         except Exception:  # noqa: BLE001
@@ -448,315 +435,136 @@ class Reconciler:
         effective: dict[str, ov.OverrideTrace],
         devices: list[dict],
         *,
-        router: AsusRouterClient | None = None,
+        adapter: RouterAdapter | None = None,
         ip_to_mac: dict[str, str] | None = None,
         mac_to_name: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Mirror dashboard state into the router (Stages 1/2/3).
 
-        The router session and the live MAC<->IP snapshot are taken
-        once per tick by :meth:`tick` and threaded through here, so
-        every stage sees a consistent view of the network.
+        The adapter session and the live MAC<->IP snapshot are taken
+        once per tick by :meth:`tick` and threaded through here. The
+        adapter owns vendor-specific mechanics (which NVRAM variables
+        to twiddle, which controller API to call, etc.); the reconciler
+        only computes *desired* state per stage.
         """
-        if router is None:
-            # Router not configured / not reachable this tick; skip
-            # gracefully. (MAC reconciliation also gets skipped, which
-            # is fine -- we'll catch up on the next successful tick.)
+        if adapter is None:
             return {"enabled": False}
 
         ip_to_mac = ip_to_mac or {}
         mac_to_name = mac_to_name or {}
 
-        try:
-            # Compute desired block set (Stage 1: MAC-based "Internet Off").
-            desired_macs: list[str] = []
-            seen: set[str] = set()
-            missing_internet_off: list[str] = []
-            for ip, trace in effective.items():
-                if trace.profile_id != "internet-off":
-                    continue
-                if "/" in ip:
-                    continue
-                mac = ip_to_mac.get(ip)
-                if not mac:
-                    # Fall back to whatever we previously persisted on
-                    # the device row.
-                    for d in devices:
-                        if d["ip"] == ip:
-                            if d.get("mac_address"):
-                                mac = d["mac_address"]
-                            break
-                if not mac:
-                    missing_internet_off.append(ip)
-                    continue
-                if mac in seen:
-                    continue
-                seen.add(mac)
-                desired_macs.append(mac)
-
-            desired_tuple = tuple(sorted(desired_macs))
-
-            # Friendly names for the router UI.
-            names: dict[str, str] = {}
-            ip_by_mac = {v: k for k, v in ip_to_mac.items()}
-            for mac in desired_macs:
-                label = mac_to_name.get(mac)
-                if not label:
-                    ip = ip_by_mac.get(mac)
-                    if ip:
-                        for d in devices:
-                            if d["ip"] == ip and d.get("label"):
-                                label = d["label"]
-                                break
-                names[mac] = label or mac
-
-            # Load the set of MACs we put in the router LAST tick.
-            prev_raw = self.store.get_setting(MANAGED_MACS_KEY) or "[]"
-            try:
-                previously_managed = list(json.loads(prev_raw))
-            except json.JSONDecodeError:
-                previously_managed = []
-
-            report: dict[str, Any] = {}
-            block_list_changed = desired_tuple != self._last_router_pushed
-            if block_list_changed:
-                report = await router.apply_managed_blocked_macs(
-                    desired_macs,
-                    previously_managed=previously_managed,
-                    names=names,
-                )
-                self.store.set_setting(MANAGED_MACS_KEY, json.dumps(desired_macs))
-                self._last_router_pushed = desired_tuple
-                log.info(
-                    "router: pushed block list (ours=%d, preserved-user=%d, missing-mac=%d)",
-                    len(desired_macs),
-                    len(report.get("preserved_user_rules") or []),
-                    len(missing_internet_off),
-                )
-
-            # ---- Stage 2: DNS Director (per-MAC DNS redirect) ----
-            dns_status = await self._apply_router_dns_director(
-                router, effective, devices, ip_to_mac, mac_to_name,
-            )
-
-            # ---- Stage 3: DoH IP blocklist via SSH ----
-            doh_status = await self._apply_doh_blocklist(
-                effective, devices, ip_to_mac,
-            )
-
-            return {
-                "enabled": True,
-                "blocked": list(desired_tuple),
-                "missing": missing_internet_off,
-                "changed": block_list_changed,
-                "report": report,
-                "dnsDirector": dns_status,
-                "dohBlock": doh_status,
-            }
-        except AsusRouterError as exc:
-            log.warning("router apply failed: %s", exc)
-            return {"enabled": True, "error": str(exc)}
-
-    async def _apply_router_dns_director(
-        self,
-        router: AsusRouterClient,
-        effective: dict[str, ov.OverrideTrace],
-        devices: list[dict],
-        ip_to_mac: dict[str, str],
-        mac_to_name: dict[str, str],
-    ) -> dict[str, Any]:
-        """Push DNS Director rules for every device on a managed profile
-        (other than ``internet-off`` -- which is already blocked at L2).
-
-        DNS Director forces those MACs to use the dashboard's DNS server,
-        so a user setting their device's DNS to ``8.8.8.8`` doesn't get
-        them out of the kids/no-streaming/etc. profile.
-        """
-        enabled = self.store.get_setting("router.asus.dns_director_enabled") == "1"
-
-        prev_dnsd_raw = self.store.get_setting(MANAGED_DNS_KEY) or "[]"
-        try:
-            prev_dnsd = list(json.loads(prev_dnsd_raw))
-        except json.JSONDecodeError:
-            prev_dnsd = []
-
-        if not enabled:
-            # Feature off: if we'd previously pushed rules, do a single
-            # tear-down so the router doesn't keep redirecting devices'
-            # DNS to a server the user has now opted out of.
-            if not prev_dnsd:
-                return {"enabled": False}
-            try:
-                report = await router.apply_managed_dns_director(
-                    [],
-                    custom_dns_ip=self.store.get_setting("router.asus.dns_director_ip") or "0.0.0.0",
-                    previously_managed=prev_dnsd,
-                )
-            except AsusRouterError as exc:
-                log.warning("DNS Director tear-down failed: %s", exc)
-                return {"enabled": False, "error": str(exc)}
-            self.store.set_setting(MANAGED_DNS_KEY, "[]")
-            log.info("DNS Director disabled: cleared %d rule(s)", len(prev_dnsd))
-            return {"enabled": False, "torn_down": True, **report}
-
-        custom_dns_ip = self.store.get_setting("router.asus.dns_director_ip") or ""
-        if not custom_dns_ip:
-            return {"enabled": True, "error": "dns_director_ip not configured"}
-
-        # Build (display-name, mac) for everyone whose effective profile is
-        # one we want to enforce DNS for.
-        desired: list[tuple[str, str]] = []
-        seen: set[str] = set()
+        # Pre-compute helper structures we use across stages.
         ip_by_mac = {v: k for k, v in ip_to_mac.items()}
-        dev_label_by_ip = {d["ip"]: d.get("label") for d in devices}
-        for ip, trace in effective.items():
-            if trace.profile_id in _DNSD_SKIP_PROFILES:
-                continue
-            if "/" in ip:
-                continue
+        dev_by_ip = {d["ip"]: d for d in devices}
+        dev_mac_by_ip = {d["ip"]: d.get("mac_address") for d in devices}
+
+        def _resolve_mac(ip: str) -> str | None:
             mac = ip_to_mac.get(ip)
-            if not mac:
-                # Fallback: look up the persisted MAC for this device.
-                for d in devices:
-                    if d["ip"] == ip:
-                        mac = d.get("mac_address")
-                        break
-            if not mac or mac in seen:
+            if mac:
+                return mac
+            return dev_mac_by_ip.get(ip)
+
+        def _label_for(mac: str, ip_hint: str | None = None) -> str:
+            """Best-available friendly name for ``mac``.
+
+            Preference order: router-reported hostname > device-row
+            label at the live IP > device-row label at ``ip_hint``
+            (the IP we resolved the MAC from, which matters when the
+            router isn't currently surfacing the device) > MAC string.
+            """
+            label = mac_to_name.get(mac)
+            if label:
+                return label
+            ip = ip_by_mac.get(mac) or ip_hint
+            if ip:
+                d = dev_by_ip.get(ip)
+                if d and d.get("label"):
+                    return d["label"]
+            return mac
+
+        # ---- Stage 1: kill-switch (internet-off) -----------------------
+        kill_pairs: list[tuple[str, str]] = []  # (mac, ip_hint)
+        kill_seen: set[str] = set()
+        missing_internet_off: list[str] = []
+        for ip, trace in effective.items():
+            if trace.profile_id != "internet-off" or "/" in ip:
                 continue
-            seen.add(mac)
-            label = mac_to_name.get(mac) or dev_label_by_ip.get(ip_by_mac.get(mac, "")) or ip
-            # Strip characters the firmware tokeniser can't handle.
-            label = label.replace("<", "").replace(">", "")[:32] or mac.upper()
-            desired.append((label, mac))
+            mac = _resolve_mac(ip)
+            if not mac:
+                missing_internet_off.append(ip)
+                continue
+            if mac in kill_seen:
+                continue
+            kill_seen.add(mac)
+            kill_pairs.append((mac, ip))
 
-        try:
-            report = await router.apply_managed_dns_director(
-                desired,
-                custom_dns_ip=custom_dns_ip,
-                previously_managed=prev_dnsd,
-            )
-        except AsusRouterError as exc:
-            log.warning("router DNS Director apply failed: %s", exc)
-            return {"enabled": True, "error": str(exc)}
+        kill_macs = [m for m, _ in kill_pairs]
+        names_kill = {m: _label_for(m, ip_hint=ip) for m, ip in kill_pairs}
 
-        self.store.set_setting(MANAGED_DNS_KEY, json.dumps([m for _, m in desired]))
-        log.info(
-            "router DNS Director: pushed %d rule(s), preserved %d user rule(s)",
-            len(desired),
-            len(report.get("preserved_user_rules") or []),
-        )
-        return {
-            "enabled": True,
-            "customIp": custom_dns_ip,
-            "redirected": [m for _, m in desired],
-            "preservedUserRules": report.get("preserved_user_rules") or [],
-        }
-
-    async def _apply_doh_blocklist(
-        self,
-        effective: dict[str, ov.OverrideTrace],
-        devices: list[dict],
-        ip_to_mac: dict[str, str],
-    ) -> dict[str, Any]:
-        """Stage 3: drop all traffic from managed-profile MACs to known
-        public DoH/DoT endpoints (via iptables + ipset over SSH).
-
-        Only runs when both ``router.asus.doh_block_enabled`` and
-        ``router.asus.ssh_enabled`` are on, and an SSH password is stored.
-        Same skip-set as DNS Director (don't bother for ``unrestricted``
-        or ``internet-off``).
-
-        When the feature is *disabled* but ``MANAGED_DOH_KEY`` shows we
-        had pushed rules previously, run a single tear-down tick so the
-        router doesn't stay polluted with our drops.
-        """
-        ssh_enabled = self.store.get_setting("router.asus.ssh_enabled") == "1"
-        doh_enabled = self.store.get_setting("router.asus.doh_block_enabled") == "1"
-
-        # Decide whether we need to do anything at all.
-        prev_raw = self.store.get_setting(MANAGED_DOH_KEY) or "[]"
-        try:
-            previously_managed = list(json.loads(prev_raw))
-        except json.JSONDecodeError:
-            previously_managed = []
-
-        if not (ssh_enabled and doh_enabled):
-            # Feature is off. If we previously pushed rules, tear them
-            # down once so the router is left clean.
-            if not previously_managed:
-                return {"enabled": False}
-            if self._ssh_factory is None:
-                return {"enabled": False, "torn_down": False}
-            # Pass ignore_enabled=True so we can still reach the router
-            # to clean up even though the user has just toggled SSH off.
-            try:
-                cfg = self._ssh_factory(ignore_enabled=True)  # type: ignore[call-arg]
-            except TypeError:
-                cfg = self._ssh_factory()
-            if cfg is None:
-                # Credentials gone; we can't reach the router. Forget the
-                # marker so we stop trying.
-                self.store.set_setting(MANAGED_DOH_KEY, "[]")
-                self._last_doh_pushed = ()
-                return {"enabled": False, "torn_down": False,
-                        "error": "ssh credentials not set; tear-down skipped"}
-            try:
-                async with AsusSshClient(cfg) as ssh:
-                    report = await ssh.apply_doh_blocklist([])
-            except AsusSshError as exc:
-                log.warning("DoH blocklist tear-down failed: %s", exc)
-                return {"enabled": False, "error": str(exc)}
-            self.store.set_setting(MANAGED_DOH_KEY, "[]")
-            self._last_doh_pushed = ()
-            log.info("DoH blocklist disabled: torn down %d rule(s)",
-                     report.get("removed", 0))
-            return {"enabled": False, "torn_down": True, **report}
-
-        if self._ssh_factory is None:
-            return {"enabled": False, "error": "no ssh factory"}
-
-        cfg = self._ssh_factory()
-        if cfg is None:
-            return {"enabled": True, "error": "ssh credentials not set"}
-
-        # Build the desired MAC set: same logic as DNS Director.
-        desired_macs: set[str] = set()
+        # ---- Stage 2 / Stage 3 desired sets ----------------------------
+        # Every device on a managed profile (other than internet-off /
+        # unrestricted) needs DNS Director + DoH block enforcement.
+        protect_pairs: list[tuple[str, str]] = []  # (mac, ip_hint)
+        protect_seen: set[str] = set()
         for ip, trace in effective.items():
             if trace.profile_id in _DNSD_SKIP_PROFILES or "/" in ip:
                 continue
-            mac = ip_to_mac.get(ip)
-            if not mac:
-                for d in devices:
-                    if d["ip"] == ip:
-                        mac = d.get("mac_address")
-                        break
-            if mac:
-                desired_macs.add(mac.lower())
+            mac = _resolve_mac(ip)
+            if not mac or mac.lower() in protect_seen:
+                continue
+            protect_seen.add(mac.lower())
+            protect_pairs.append((mac, ip))
 
-        desired_sorted = sorted(desired_macs)
-        # Skip if nothing changed since last push.
-        same = (tuple(desired_sorted) == self._last_doh_pushed and
-                set(previously_managed) == desired_macs)
-        if same and self._last_doh_pushed is not None:
-            return {
-                "enabled": True,
-                "macs": desired_sorted,
-                "skipped": "no-change",
-            }
+        protect_macs = [m for m, _ in protect_pairs]
+        names_protect = {m: _label_for(m, ip_hint=ip) for m, ip in protect_pairs}
 
-        try:
-            async with AsusSshClient(cfg) as ssh:
-                report = await ssh.apply_doh_blocklist(desired_sorted)
-        except AsusSshError as exc:
-            log.warning("DoH blocklist apply failed: %s", exc)
-            return {"enabled": True, "error": str(exc)}
+        # ---- Dispatch -------------------------------------------------
+        caps = adapter.capabilities
+        results: dict[str, Any] = {"enabled": True, "vendor": adapter.vendor}
 
-        self.store.set_setting(MANAGED_DOH_KEY, json.dumps(desired_sorted))
-        self._last_doh_pushed = tuple(desired_sorted)
-        log.info("DoH blocklist: %d MACs, +%d/-%d rules",
-                 len(desired_sorted), report.get("added", 0),
-                 report.get("removed", 0))
-        return {"enabled": True, **report}
+        if caps.supports_kill_switch:
+            try:
+                kill_report = await adapter.apply_kill_switch(
+                    kill_macs, names=names_kill,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.exception("kill-switch apply crashed")
+                kill_report = {"enabled": True, "error": str(exc)}
+            # Hoist the most-asked-about fields onto the top-level dict
+            # so the existing UI/API consumers keep working.
+            results["blocked"] = kill_report.get("blocked") or []
+            results["missing"] = missing_internet_off
+            results["changed"] = bool(kill_report.get("changed"))
+            results["report"] = kill_report.get("report") or {}
+            results["killSwitch"] = kill_report
+        else:
+            results["killSwitch"] = {"enabled": False, "supported": False}
+
+        if caps.supports_dns_director:
+            try:
+                dns_report = await adapter.apply_dns_director(
+                    protect_macs, names=names_protect,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.exception("DNS Director apply crashed")
+                dns_report = {"enabled": True, "error": str(exc)}
+            results["dnsDirector"] = dns_report
+        else:
+            results["dnsDirector"] = {"enabled": False, "supported": False}
+
+        if caps.supports_doh_blocking:
+            try:
+                doh_report = await adapter.apply_doh_block(
+                    protect_macs, names=names_protect,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.exception("DoH block apply crashed")
+                doh_report = {"enabled": True, "error": str(exc)}
+            results["dohBlock"] = doh_report
+        else:
+            results["dohBlock"] = {"enabled": False, "supported": False}
+
+        return results
 
     @staticmethod
     def _desired_group_for(trace: ov.OverrideTrace) -> str | None:
