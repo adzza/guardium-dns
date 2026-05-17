@@ -303,13 +303,40 @@ class RegistryAutoMigrationTests(unittest.TestCase):
         # Default env -- alpha flag not set -- must refuse.
         self.assertIsNone(get_adapter(self.store, _FakeSecrets()))
 
+    def test_unifi_loaded_when_alpha_flag_set(self) -> None:
+        """When the alpha flag IS set and UniFi creds are saved, the
+        registry must return a real UnifiAdapter instance.
+        """
+        import os
+        os.environ["GUARDIUM_ENABLE_UNIFI_ALPHA"] = "1"
+        try:
+            self.store.set_setting("router.vendor", "unifi")
+            self.store.set_setting("router.unifi.host", "https://unifi.lan")
+            self.store.set_setting("router.unifi.username", "guardium")
+            secrets = _FakeSecrets(**{"router.unifi.password": "hunter2"})
+
+            from server.routers.registry import get_adapter
+            adapter = get_adapter(self.store, secrets)
+            self.assertIsNotNone(adapter)
+            assert adapter is not None
+            self.assertEqual(adapter.vendor, "unifi")
+            self.assertFalse(adapter.capabilities.supports_dns_director)
+        finally:
+            os.environ.pop("GUARDIUM_ENABLE_UNIFI_ALPHA", None)
+
 
 class _FakeSecrets:
-    def get(self, _key: str) -> str | None:
-        return None
+    def __init__(self, **values: str) -> None:
+        self._values: dict[str, str] = dict(values)
 
-    def set(self, _key: str, _value: str | None) -> None:
-        return None
+    def get(self, key: str) -> str | None:
+        return self._values.get(key)
+
+    def set(self, key: str, value: str | None) -> None:
+        if value is None:
+            self._values.pop(key, None)
+        else:
+            self._values[key] = value
 
 
 def main() -> int:
