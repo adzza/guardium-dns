@@ -61,6 +61,16 @@ class UnifiAuthError(UnifiError):
     """
 
 
+class UnifiNotFound(UnifiError):
+    """Controller returned 404 -- the resource is gone or never existed.
+
+    Raised by :meth:`UnifiLegacyApi.update_traffic_rule` and
+    :meth:`UnifiLegacyApi.delete_traffic_rule` so the adapter can
+    transparently switch back to the create path when the user has
+    deleted our managed rule in the UniFi UI.
+    """
+
+
 class UnifiLegacyApi:
     """Single-session, single-host client. Not thread-safe.
 
@@ -148,6 +158,39 @@ class UnifiLegacyApi:
             self._api_path(f"/v2/api/site/{self.site}/trafficrules"),
             envelope=False,
         )
+
+    async def create_traffic_rule(self, body: dict[str, Any]) -> dict[str, Any]:
+        """POST a new Traffic Rule and return the created row (which
+        carries the ``_id`` we'll cache for later updates).
+        """
+        path = self._api_path(f"/v2/api/site/{self.site}/trafficrules")
+        resp = await self._call_with_relogin("POST", path, json_body=body)
+        return self._parse_json(resp, path)
+
+    async def update_traffic_rule(
+        self, rule_id: str, body: dict[str, Any],
+    ) -> dict[str, Any]:
+        """PUT an existing Traffic Rule.
+
+        Raises :class:`UnifiNotFound` if the controller returns 404,
+        so the adapter can fall back to ``create_traffic_rule`` (this
+        happens when the user deletes our managed row by hand in the
+        UniFi UI between ticks).
+        """
+        path = self._api_path(f"/v2/api/site/{self.site}/trafficrules/{rule_id}")
+        resp = await self._call_with_relogin("PUT", path, json_body=body)
+        return self._parse_json(resp, path)
+
+    async def delete_traffic_rule(self, rule_id: str) -> None:
+        """DELETE an existing Traffic Rule.
+
+        404 is treated as success -- the row is already gone.
+        """
+        path = self._api_path(f"/v2/api/site/{self.site}/trafficrules/{rule_id}")
+        try:
+            await self._call_with_relogin("DELETE", path)
+        except UnifiNotFound:
+            return
 
     # ---- request plumbing ---------------------------------------------
 
@@ -282,6 +325,11 @@ class UnifiLegacyApi:
                 self._logged_in = False
                 await self._login()
                 continue
+
+            if resp.status_code == 404:
+                raise UnifiNotFound(
+                    self._explain_http_error(resp, method, path)
+                )
 
             if resp.status_code >= 400:
                 raise UnifiError(self._explain_http_error(resp, method, path))

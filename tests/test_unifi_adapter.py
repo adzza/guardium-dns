@@ -101,10 +101,56 @@ class FromStoreTests(unittest.TestCase):
         self.assertTrue(adapter._public._verify)
 
 
-class ApplyMethodsTests(unittest.TestCase):
-    """Phase-2 contract: kill switch and DoH block raise
-    NotImplementedError; DNS Director is a permanent no-op.
+class _FakeLegacy:
+    """In-memory stand-in for :class:`UnifiLegacyApi`.
+
+    Records every write so tests can assert on the rule lifecycle
+    without spinning up a real controller. The ``apply_*`` helpers
+    in :class:`UnifiAdapter` only touch these methods.
     """
+
+    def __init__(self) -> None:
+        self.rules: dict[str, dict] = {}
+        self._next_id = 1
+        self.creates: list[dict] = []
+        self.updates: list[tuple[str, dict]] = []
+        self.deletes: list[str] = []
+        self.fail_update_with_not_found: bool = False
+        self.fail_next_create: Exception | None = None
+
+    async def list_traffic_rules(self):
+        return [dict(r) for r in self.rules.values()]
+
+    async def create_traffic_rule(self, body):
+        if self.fail_next_create is not None:
+            exc = self.fail_next_create
+            self.fail_next_create = None
+            raise exc
+        rid = f"rule-{self._next_id}"
+        self._next_id += 1
+        row = dict(body)
+        row["_id"] = rid
+        self.rules[rid] = row
+        self.creates.append(row)
+        return row
+
+    async def update_traffic_rule(self, rule_id, body):
+        from server.routers.unifi.legacy_api import UnifiNotFound
+        if self.fail_update_with_not_found or rule_id not in self.rules:
+            raise UnifiNotFound(f"rule {rule_id} gone")
+        row = dict(body)
+        row["_id"] = rule_id
+        self.rules[rule_id] = row
+        self.updates.append((rule_id, row))
+        return row
+
+    async def delete_traffic_rule(self, rule_id):
+        self.deletes.append(rule_id)
+        self.rules.pop(rule_id, None)
+
+
+class ApplyDnsDirectorTests(unittest.TestCase):
+    """Stage 2 is permanently unsupported on UniFi."""
 
     def setUp(self) -> None:
         self._tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
@@ -120,17 +166,165 @@ class ApplyMethodsTests(unittest.TestCase):
     def tearDown(self) -> None:
         Path(self._tmp.name).unlink(missing_ok=True)
 
-    def test_kill_switch_raises_not_implemented(self) -> None:
-        with self.assertRaises(NotImplementedError):
-            asyncio.run(self.adapter.apply_kill_switch(["aa:bb:cc:dd:ee:01"], names={}))
+    def test_dns_director_returns_unsupported_sentinel(self) -> None:
+        result = asyncio.run(self.adapter.apply_dns_director(
+            ["aa:bb:cc:dd:ee:01"], names={},
+        ))
+        self.assertEqual(result, {"enabled": False, "supported": False})
+
+
+class ApplyDohBlockNotYetImplementedTests(unittest.TestCase):
+    """DoH block lands in Phase 4. Until then it still raises."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        self._tmp.close()
+        store = Store(self._tmp.name)
+        store.set_setting(UNIFI_KEYS["host"], "https://unifi.lan")
+        store.set_setting(UNIFI_KEYS["username"], "guardium")
+        secrets = _FakeSecrets(**{UNIFI_KEYS["password"]: "hunter2"})
+        adapter = UnifiAdapter.from_store(store, secrets)
+        assert adapter is not None
+        self.adapter = adapter
+
+    def tearDown(self) -> None:
+        Path(self._tmp.name).unlink(missing_ok=True)
 
     def test_doh_block_raises_not_implemented(self) -> None:
         with self.assertRaises(NotImplementedError):
             asyncio.run(self.adapter.apply_doh_block(["aa:bb:cc:dd:ee:01"], names={}))
 
-    def test_dns_director_is_a_permanent_no_op(self) -> None:
-        result = asyncio.run(self.adapter.apply_dns_director(["aa:bb:cc:dd:ee:01"], names={}))
-        self.assertEqual(result, {"enabled": False, "supported": False})
+
+class ApplyKillSwitchTests(unittest.TestCase):
+    """Phase 3: single managed Traffic Rule, idempotent, with cached _id."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        self._tmp.close()
+        self.store = Store(self._tmp.name)
+        self.store.set_setting(UNIFI_KEYS["host"], "https://unifi.lan")
+        self.store.set_setting(UNIFI_KEYS["username"], "guardium")
+        secrets = _FakeSecrets(**{UNIFI_KEYS["password"]: "hunter2"})
+        adapter = UnifiAdapter.from_store(self.store, secrets)
+        assert adapter is not None
+        self.adapter = adapter
+        self.fake_legacy = _FakeLegacy()
+        # Swap the real legacy client for our fake on the instance.
+        self.adapter._legacy = self.fake_legacy  # type: ignore[assignment]
+
+    def tearDown(self) -> None:
+        Path(self._tmp.name).unlink(missing_ok=True)
+
+    def test_first_call_creates_rule_and_persists_id(self) -> None:
+        result = asyncio.run(self.adapter.apply_kill_switch(
+            ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"], names={},
+        ))
+        self.assertEqual(result["enabled"], True)
+        self.assertEqual(result["action"], "created")
+        self.assertEqual(result["stage"], "kill")
+        self.assertEqual(result["matching_target"], "INTERNET")
+        self.assertEqual(len(self.fake_legacy.creates), 1)
+        self.assertEqual(len(self.fake_legacy.updates), 0)
+        # Persisted state.
+        self.assertEqual(
+            self.store.get_setting(UNIFI_KEYS["kill_switch_rule_id"]),
+            "rule-1",
+        )
+        self.assertEqual(
+            json.loads(self.store.get_setting(UNIFI_KEYS["managed_kill_macs"]) or "[]"),
+            ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"],
+        )
+
+    def test_second_call_same_macs_is_skipped(self) -> None:
+        asyncio.run(self.adapter.apply_kill_switch(
+            ["aa:bb:cc:dd:ee:01"], names={},
+        ))
+        result = asyncio.run(self.adapter.apply_kill_switch(
+            ["aa:bb:cc:dd:ee:01"], names={},
+        ))
+        self.assertEqual(result.get("skipped"), "no-change")
+        # No additional traffic to the controller.
+        self.assertEqual(len(self.fake_legacy.creates), 1)
+        self.assertEqual(len(self.fake_legacy.updates), 0)
+
+    def test_changed_macs_trigger_put(self) -> None:
+        asyncio.run(self.adapter.apply_kill_switch(
+            ["aa:bb:cc:dd:ee:01"], names={},
+        ))
+        result = asyncio.run(self.adapter.apply_kill_switch(
+            ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"], names={},
+        ))
+        self.assertEqual(result["action"], "updated")
+        self.assertEqual(len(self.fake_legacy.updates), 1)
+        # The PUT must carry both MACs.
+        _id, body = self.fake_legacy.updates[0]
+        macs = [d["client_mac"] for d in body["target_devices"]]
+        self.assertCountEqual(macs, ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"])
+
+    def test_user_deleted_rule_falls_back_to_create(self) -> None:
+        """If the user deletes our managed row in the UniFi UI, the next
+        PUT will 404. The adapter must transparently re-create.
+        """
+        asyncio.run(self.adapter.apply_kill_switch(
+            ["aa:bb:cc:dd:ee:01"], names={},
+        ))
+        # Simulate UI deletion: the row vanishes from the controller
+        # but the cached id is still in our settings store.
+        self.fake_legacy.rules.clear()
+        result = asyncio.run(self.adapter.apply_kill_switch(
+            ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"], names={},
+        ))
+        self.assertEqual(result["action"], "created")
+        # A new id was assigned and persisted.
+        self.assertEqual(
+            self.store.get_setting(UNIFI_KEYS["kill_switch_rule_id"]),
+            "rule-2",
+        )
+
+    def test_existing_managed_rule_is_adopted(self) -> None:
+        """Fresh install / lost cache: the rule already exists on the
+        controller because we created it on a previous host. The adapter
+        must find it by managed name and adopt its _id rather than
+        creating a duplicate.
+        """
+        # Pre-seed a "previously created" managed rule.
+        from server.routers.unifi.traffic_rule import KILL_SWITCH_NAME
+        self.fake_legacy.rules["preexisting-id"] = {
+            "_id": "preexisting-id",
+            "name": KILL_SWITCH_NAME,
+            "matching_target": "INTERNET",
+            "enabled": True,
+            "target_devices": [],
+        }
+        result = asyncio.run(self.adapter.apply_kill_switch(
+            ["aa:bb:cc:dd:ee:01"], names={},
+        ))
+        self.assertEqual(result["action"], "updated")
+        self.assertEqual(result["ruleId"], "preexisting-id")
+        self.assertEqual(
+            self.store.get_setting(UNIFI_KEYS["kill_switch_rule_id"]),
+            "preexisting-id",
+        )
+        # No new rules created.
+        self.assertEqual(len(self.fake_legacy.creates), 0)
+
+    def test_empty_macs_yields_disabled_rule(self) -> None:
+        result = asyncio.run(self.adapter.apply_kill_switch([], names={}))
+        self.assertEqual(result["action"], "created")
+        self.assertFalse(result["ruleEnabled"])
+
+    def test_underlying_failure_surfaces_in_status(self) -> None:
+        """If the controller rejects the create, the adapter must NOT
+        raise -- the reconciler relies on errors flowing back in the
+        status dict so one stage failing doesn't take down the tick.
+        """
+        from server.routers.unifi.legacy_api import UnifiError
+        self.fake_legacy.fail_next_create = UnifiError("503 Service Unavailable")
+        result = asyncio.run(self.adapter.apply_kill_switch(
+            ["aa:bb:cc:dd:ee:01"], names={},
+        ))
+        self.assertIn("error", result)
+        self.assertIn("503", result["error"])
 
 
 class StatStaNormalisationTests(unittest.TestCase):
@@ -282,7 +476,9 @@ def main() -> int:
     suite = unittest.TestSuite([
         loader.loadTestsFromTestCase(CapabilitiesTests),
         loader.loadTestsFromTestCase(FromStoreTests),
-        loader.loadTestsFromTestCase(ApplyMethodsTests),
+        loader.loadTestsFromTestCase(ApplyDnsDirectorTests),
+        loader.loadTestsFromTestCase(ApplyDohBlockNotYetImplementedTests),
+        loader.loadTestsFromTestCase(ApplyKillSwitchTests),
         loader.loadTestsFromTestCase(StatStaNormalisationTests),
         loader.loadTestsFromTestCase(GatewayDetectionTests),
         loader.loadTestsFromTestCase(TrafficRuleBuilderTests),

@@ -20,6 +20,7 @@ Phase 2 scope (this commit): scaffolding only.
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Mapping
 
@@ -30,8 +31,14 @@ from .doh_apps import (
     load_cached_app_ids,
     save_cached_app_ids,
 )
-from .legacy_api import UnifiAuthError, UnifiError, UnifiLegacyApi
+from .legacy_api import (
+    UnifiAuthError,
+    UnifiError,
+    UnifiLegacyApi,
+    UnifiNotFound,
+)
 from .public_api import UnifiPublicApi, UnifiPublicApiError
+from . import traffic_rule as tr
 
 
 log = logging.getLogger("dns-dashboard.routers.unifi")
@@ -241,10 +248,23 @@ class UnifiAdapter(RouterAdapter):
         *,
         names: Mapping[str, str],
     ) -> dict[str, Any]:
-        # Implemented in Phase 3.
-        raise NotImplementedError(
-            "UniFi Stage 1 (kill switch) is not implemented yet "
-            "(coming in Phase 3 of the integration)."
+        """Stage 1 on UniFi: single managed Traffic Rule blocking the
+        Internet for every MAC in ``desired_macs``.
+
+        Idempotent: PUT-updates the cached row when possible, falls
+        back to discovery-by-name, then to creation. Persists
+        ``router.unifi.kill_switch_rule_id`` and
+        ``router.unifi.managed_kill_macs`` so subsequent ticks know
+        what we last pushed.
+        """
+        return await self._apply_managed_rule(
+            stage="kill",
+            desired_macs=desired_macs,
+            body_builder=tr.build_kill_switch_rule,
+            managed_name=tr.KILL_SWITCH_NAME,
+            id_setting=UNIFI_KEYS["kill_switch_rule_id"],
+            macs_setting=UNIFI_KEYS["managed_kill_macs"],
+            extra_status={"matching_target": "INTERNET"},
         )
 
     async def apply_dns_director(
@@ -270,6 +290,150 @@ class UnifiAdapter(RouterAdapter):
             "UniFi Stage 3 (DoH block) is not implemented yet "
             "(coming in Phase 4 of the integration)."
         )
+
+    # ---- shared rule plumbing -----------------------------------------
+
+    async def _apply_managed_rule(
+        self,
+        *,
+        stage: str,
+        desired_macs: list[str],
+        body_builder,
+        managed_name: str,
+        id_setting: str,
+        macs_setting: str,
+        extra_status: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Idempotently push a single managed Traffic Rule.
+
+        Shared between Stage 1 (kill switch) and -- in Phase 4 -- Stage
+        3 (DoH block). Both stages have the same lifecycle:
+
+        1. Build the desired rule body via ``body_builder(macs)``.
+        2. Resolve the rule's ``_id``: prefer the cached setting; fall
+           back to scanning existing rules for one with our managed
+           name (so a process restart doesn't lose track of the row);
+           else None (will create).
+        3. PUT to update, or POST to create. PUT that comes back 404
+           is treated as "the user deleted our row" and falls through
+           to a fresh POST.
+        4. Persist the new ``_id`` and the managed MAC set so the next
+           tick can short-circuit if nothing's changed.
+
+        Exceptions never propagate; failures are returned as an error
+        field in the status dict so the reconciler can keep ticking.
+        """
+        desired_sorted = sorted({
+            n for n in (_normalize_mac(m) for m in desired_macs) if n
+        })
+        prev = self._load_managed(macs_setting)
+        cached_id = (self._store.get_setting(id_setting) or "").strip() or None
+
+        # Skip-if-same: nothing to do, and we already have a row id
+        # cached. (If there's no cached id we still want one PUT/POST
+        # to establish + persist it.)
+        if desired_sorted == prev and cached_id:
+            status: dict[str, Any] = {
+                "enabled": True,
+                "stage": stage,
+                "macs": desired_sorted,
+                "ruleId": cached_id,
+                "skipped": "no-change",
+            }
+            if extra_status:
+                status.update(extra_status)
+            return status
+
+        body = body_builder(desired_sorted)
+
+        # If we don't have a cached id, scan existing rules for one we
+        # apparently own. Cheap insurance against losing the cached id
+        # (e.g. data/ wiped, user restored from old backup).
+        if cached_id is None:
+            try:
+                cached_id = await self._discover_managed_rule_id(managed_name)
+            except UnifiError as exc:
+                log.warning("UniFi list_traffic_rules failed: %s", exc)
+                return {
+                    "enabled": True, "stage": stage,
+                    "error": f"could not list rules: {exc}",
+                }
+
+        rule_id = cached_id
+        action_taken = "noop"
+
+        try:
+            if rule_id:
+                try:
+                    await self._legacy.update_traffic_rule(rule_id, body)
+                    action_taken = "updated"
+                except UnifiNotFound:
+                    log.info("UniFi managed rule %s gone; recreating", rule_id)
+                    rule_id = None  # fall through to create
+            if rule_id is None:
+                created = await self._legacy.create_traffic_rule(body)
+                rule_id = str(created.get("_id") or created.get("id") or "")
+                if not rule_id:
+                    return {
+                        "enabled": True, "stage": stage,
+                        "error": "controller did not return _id for new rule",
+                    }
+                action_taken = "created"
+        except UnifiError as exc:
+            log.warning("UniFi %s rule push failed: %s", stage, exc)
+            return {"enabled": True, "stage": stage, "error": str(exc)}
+
+        # Persist.
+        self._store.set_setting(id_setting, rule_id)
+        self._store.set_setting(macs_setting, json.dumps(desired_sorted))
+
+        log.info(
+            "UniFi %s rule %s (%s): %d MAC(s)",
+            stage, rule_id, action_taken, len(desired_sorted),
+        )
+
+        status = {
+            "enabled": True,
+            "stage": stage,
+            "macs": desired_sorted,
+            "ruleId": rule_id,
+            "action": action_taken,
+            "ruleEnabled": bool(body.get("enabled")),
+        }
+        if extra_status:
+            status.update(extra_status)
+        return status
+
+    async def _discover_managed_rule_id(self, managed_name: str) -> str | None:
+        """Find an existing rule with the given managed name, if any."""
+        rules = await self._legacy.list_traffic_rules()
+        for r in rules:
+            if str(r.get("name") or "") == managed_name:
+                rid = r.get("_id") or r.get("id")
+                if rid:
+                    return str(rid)
+        return None
+
+    def _load_managed(self, setting_key: str) -> list[str]:
+        raw = self._store.get_setting(setting_key) or "[]"
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+        return [str(x) for x in parsed] if isinstance(parsed, list) else []
+
+
+def _normalize_mac(raw: str | None) -> str | None:
+    """Return ``aa:bb:cc:dd:ee:ff`` form, or ``None`` if not a MAC.
+
+    Tolerates dash-separated, mixed-case, and surrounding whitespace.
+    """
+    if not raw:
+        return None
+    m = raw.replace("-", ":").strip().lower()
+    if m.count(":") != 5:
+        return None
+    return m
 
 
 def _to_router_client(raw: dict[str, Any]) -> RouterClient:
