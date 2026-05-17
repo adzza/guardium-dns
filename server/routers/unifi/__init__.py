@@ -20,6 +20,7 @@ Phase 2 scope (this commit): scaffolding only.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from typing import Any, Mapping
@@ -64,6 +65,10 @@ UNIFI_KEYS = {
     # What we put on the rule last tick.
     "managed_kill_macs": "router.unifi.managed_kill_macs",
     "managed_doh_macs":  "router.unifi.managed_doh_macs",
+    # Body-hash signatures so we can detect non-MAC field changes
+    # (e.g. firmware-updated DPI app IDs in the DoH rule) and re-push.
+    "kill_switch_body_hash": "router.unifi.kill_switch_body_hash",
+    "doh_block_body_hash":   "router.unifi.doh_block_body_hash",
 }
 
 
@@ -264,6 +269,7 @@ class UnifiAdapter(RouterAdapter):
             managed_name=tr.KILL_SWITCH_NAME,
             id_setting=UNIFI_KEYS["kill_switch_rule_id"],
             macs_setting=UNIFI_KEYS["managed_kill_macs"],
+            body_hash_setting=UNIFI_KEYS["kill_switch_body_hash"],
             extra_status={"matching_target": "INTERNET"},
         )
 
@@ -285,11 +291,98 @@ class UnifiAdapter(RouterAdapter):
         *,
         names: Mapping[str, str],
     ) -> dict[str, Any]:
-        # Implemented in Phase 4.
-        raise NotImplementedError(
-            "UniFi Stage 3 (DoH block) is not implemented yet "
-            "(coming in Phase 4 of the integration)."
+        """Stage 3 on UniFi: a single managed Traffic Rule that drops
+        traffic from ``desired_macs`` to the controller's DoH / DoT
+        application signatures (matching_target=APP).
+
+        Requires the ``router.unifi.doh_block_enabled`` toggle to be on.
+        When it's off, any previously-managed rule is *deleted* (not
+        just disabled) so the user's controller UI is left clean. The
+        cached rule id is cleared so re-enabling creates a fresh row.
+        """
+        enabled = self._store.get_setting(
+            UNIFI_KEYS["doh_block_enabled"]
+        ) == "1"
+        cached_id = (
+            self._store.get_setting(UNIFI_KEYS["doh_block_rule_id"]) or ""
+        ).strip() or None
+        prev_macs = self._load_managed(UNIFI_KEYS["managed_doh_macs"])
+
+        if not enabled:
+            return await self._teardown_doh_block(
+                cached_id=cached_id,
+                prev_macs=prev_macs,
+            )
+
+        # Push path: needs app IDs.
+        try:
+            app_ids = await self.get_doh_app_ids()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("UniFi DoH app discovery failed: %s", exc)
+            return {
+                "enabled": True, "stage": "doh",
+                "error": f"DoH app discovery failed: {exc}",
+            }
+        if not app_ids:
+            return {
+                "enabled": True, "stage": "doh",
+                "error": "no DoH/DoT app IDs available "
+                         "(DPI discovery and the hard-coded fallback both came up empty)",
+            }
+
+        def body_builder(macs: list[str]) -> dict[str, Any]:
+            return tr.build_doh_block_rule(macs, app_ids)
+
+        result = await self._apply_managed_rule(
+            stage="doh",
+            desired_macs=desired_macs,
+            body_builder=body_builder,
+            managed_name=tr.DOH_BLOCK_NAME,
+            id_setting=UNIFI_KEYS["doh_block_rule_id"],
+            macs_setting=UNIFI_KEYS["managed_doh_macs"],
+            body_hash_setting=UNIFI_KEYS["doh_block_body_hash"],
+            extra_status={
+                "matching_target": "APP",
+                "appIds": list(app_ids),
+            },
         )
+        return result
+
+    async def _teardown_doh_block(
+        self,
+        *,
+        cached_id: str | None,
+        prev_macs: list[str],
+    ) -> dict[str, Any]:
+        """Stage-3 OFF: if we left a managed rule on the controller,
+        delete it. Idempotent -- safe to call when there's nothing to
+        do.
+        """
+        if not (cached_id or prev_macs):
+            return {"enabled": False, "stage": "doh"}
+
+        deleted = False
+        if cached_id:
+            try:
+                await self._legacy.delete_traffic_rule(cached_id)
+                deleted = True
+            except UnifiError as exc:
+                log.warning("UniFi DoH rule delete failed: %s", exc)
+                return {
+                    "enabled": False, "stage": "doh",
+                    "torn_down": False, "error": str(exc),
+                }
+            else:
+                log.info("UniFi DoH rule %s deleted (tear-down)", cached_id)
+
+        self._store.set_setting(UNIFI_KEYS["doh_block_rule_id"], None)
+        self._store.set_setting(UNIFI_KEYS["managed_doh_macs"], "[]")
+        self._store.set_setting(UNIFI_KEYS["doh_block_body_hash"], None)
+        return {
+            "enabled": False, "stage": "doh",
+            "torn_down": True,
+            "deletedRuleId": cached_id if deleted else None,
+        }
 
     # ---- shared rule plumbing -----------------------------------------
 
@@ -302,22 +395,31 @@ class UnifiAdapter(RouterAdapter):
         managed_name: str,
         id_setting: str,
         macs_setting: str,
+        body_hash_setting: str | None = None,
         extra_status: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Idempotently push a single managed Traffic Rule.
 
-        Shared between Stage 1 (kill switch) and -- in Phase 4 -- Stage
-        3 (DoH block). Both stages have the same lifecycle:
+        Shared between Stage 1 (kill switch) and Stage 3 (DoH block).
+        Lifecycle:
 
-        1. Build the desired rule body via ``body_builder(macs)``.
-        2. Resolve the rule's ``_id``: prefer the cached setting; fall
+        1. Normalise + sort ``desired_macs``.
+        2. Build the desired rule body via ``body_builder(macs)`` and
+           hash it (stable JSON serialisation). Stage 3 needs the
+           full-body hash because the rule body's ``app_ids`` can
+           change between ticks if the controller's DPI catalogue is
+           updated; Stage 1's body depends only on MACs so the hash
+           is equivalent to the MAC-set diff.
+        3. Resolve the rule's ``_id``: prefer the cached setting; fall
            back to scanning existing rules for one with our managed
            name (so a process restart doesn't lose track of the row);
            else None (will create).
-        3. PUT to update, or POST to create. PUT that comes back 404
+        4. Short-circuit if the body hash matches what we last pushed
+           AND we already have a cached ``_id``.
+        5. PUT to update, or POST to create. PUT that comes back 404
            is treated as "the user deleted our row" and falls through
            to a fresh POST.
-        4. Persist the new ``_id`` and the managed MAC set so the next
+        6. Persist the new ``_id``, MAC set and body hash so the next
            tick can short-circuit if nothing's changed.
 
         Exceptions never propagate; failures are returned as an error
@@ -326,13 +428,17 @@ class UnifiAdapter(RouterAdapter):
         desired_sorted = sorted({
             n for n in (_normalize_mac(m) for m in desired_macs) if n
         })
-        prev = self._load_managed(macs_setting)
+        prev_macs = self._load_managed(macs_setting)
         cached_id = (self._store.get_setting(id_setting) or "").strip() or None
 
-        # Skip-if-same: nothing to do, and we already have a row id
-        # cached. (If there's no cached id we still want one PUT/POST
-        # to establish + persist it.)
-        if desired_sorted == prev and cached_id:
+        body = body_builder(desired_sorted)
+        body_hash = _hash_body(body)
+        prev_hash = (
+            self._store.get_setting(body_hash_setting) or ""
+            if body_hash_setting else ""
+        )
+
+        if cached_id and body_hash == prev_hash and desired_sorted == prev_macs:
             status: dict[str, Any] = {
                 "enabled": True,
                 "stage": stage,
@@ -343,8 +449,6 @@ class UnifiAdapter(RouterAdapter):
             if extra_status:
                 status.update(extra_status)
             return status
-
-        body = body_builder(desired_sorted)
 
         # If we don't have a cached id, scan existing rules for one we
         # apparently own. Cheap insurance against losing the cached id
@@ -386,6 +490,8 @@ class UnifiAdapter(RouterAdapter):
         # Persist.
         self._store.set_setting(id_setting, rule_id)
         self._store.set_setting(macs_setting, json.dumps(desired_sorted))
+        if body_hash_setting:
+            self._store.set_setting(body_hash_setting, body_hash)
 
         log.info(
             "UniFi %s rule %s (%s): %d MAC(s)",
@@ -421,6 +527,18 @@ class UnifiAdapter(RouterAdapter):
         except json.JSONDecodeError:
             return []
         return [str(x) for x in parsed] if isinstance(parsed, list) else []
+
+
+def _hash_body(body: dict[str, Any]) -> str:
+    """Stable hash of a rule body, used for the skip-if-same check.
+
+    The body dict is JSON-serialised with ``sort_keys`` so identical
+    semantics produce the same hash regardless of dict iteration
+    order. We use SHA-256 over the encoded bytes -- overkill
+    cryptographically but cheap and free of collision worries.
+    """
+    payload = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _normalize_mac(raw: str | None) -> str | None:

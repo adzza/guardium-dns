@@ -173,8 +173,124 @@ class ApplyDnsDirectorTests(unittest.TestCase):
         self.assertEqual(result, {"enabled": False, "supported": False})
 
 
+class ApplyDohBlockTests(unittest.TestCase):
+    """Phase 4: managed Traffic Rule with matching_target=APP.
+
+    Same idempotency lifecycle as Stage 1 plus the doh_block_enabled
+    toggle (off => tear-down) and DPI app-id discovery.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+        self._tmp.close()
+        self.store = Store(self._tmp.name)
+        self.store.set_setting(UNIFI_KEYS["host"], "https://unifi.lan")
+        self.store.set_setting(UNIFI_KEYS["username"], "guardium")
+        # Stage 3 is opt-in via this toggle.
+        self.store.set_setting(UNIFI_KEYS["doh_block_enabled"], "1")
+        secrets = _FakeSecrets(**{UNIFI_KEYS["password"]: "hunter2"})
+        adapter = UnifiAdapter.from_store(self.store, secrets)
+        assert adapter is not None
+        self.adapter = adapter
+        self.fake_legacy = _FakeLegacy()
+        self.adapter._legacy = self.fake_legacy  # type: ignore[assignment]
+        # Stub out DPI discovery so we don't need a public API client.
+        self.app_ids = ["551", "552"]
+        async def _stub_app_ids():
+            return list(self.app_ids)
+        self.adapter.get_doh_app_ids = _stub_app_ids  # type: ignore[assignment]
+
+    def tearDown(self) -> None:
+        Path(self._tmp.name).unlink(missing_ok=True)
+
+    def test_disabled_with_no_prior_state_is_noop(self) -> None:
+        self.store.set_setting(UNIFI_KEYS["doh_block_enabled"], "0")
+        result = asyncio.run(self.adapter.apply_doh_block(
+            ["aa:bb:cc:dd:ee:01"], names={},
+        ))
+        self.assertEqual(result, {"enabled": False, "stage": "doh"})
+        self.assertEqual(len(self.fake_legacy.creates), 0)
+        self.assertEqual(len(self.fake_legacy.deletes), 0)
+
+    def test_disabled_with_prior_state_deletes_rule(self) -> None:
+        # Push once with the toggle ON so we have a managed row.
+        asyncio.run(self.adapter.apply_doh_block(
+            ["aa:bb:cc:dd:ee:01"], names={},
+        ))
+        rule_id = self.store.get_setting(UNIFI_KEYS["doh_block_rule_id"])
+        self.assertTrue(rule_id)
+        # Toggle off and re-apply.
+        self.store.set_setting(UNIFI_KEYS["doh_block_enabled"], "0")
+        result = asyncio.run(self.adapter.apply_doh_block([], names={}))
+        self.assertTrue(result["torn_down"])
+        self.assertEqual(result["deletedRuleId"], rule_id)
+        self.assertEqual(self.fake_legacy.deletes, [rule_id])
+        # Cache cleared so a re-enable will create afresh.
+        self.assertIsNone(self.store.get_setting(UNIFI_KEYS["doh_block_rule_id"]))
+        self.assertEqual(
+            json.loads(self.store.get_setting(UNIFI_KEYS["managed_doh_macs"]) or "[]"),
+            [],
+        )
+
+    def test_enabled_creates_app_block_rule(self) -> None:
+        result = asyncio.run(self.adapter.apply_doh_block(
+            ["aa:bb:cc:dd:ee:01"], names={},
+        ))
+        self.assertEqual(result["action"], "created")
+        self.assertEqual(result["matching_target"], "APP")
+        self.assertEqual(result["appIds"], ["551", "552"])
+        body = self.fake_legacy.creates[0]
+        self.assertEqual(body["matching_target"], "APP")
+        self.assertEqual(body["app_ids"], ["551", "552"])
+        self.assertEqual(
+            [d["client_mac"] for d in body["target_devices"]],
+            ["aa:bb:cc:dd:ee:01"],
+        )
+        self.assertTrue(body["enabled"])
+
+    def test_same_macs_same_app_ids_is_skipped(self) -> None:
+        asyncio.run(self.adapter.apply_doh_block(["aa:bb:cc:dd:ee:01"], names={}))
+        result = asyncio.run(self.adapter.apply_doh_block(["aa:bb:cc:dd:ee:01"], names={}))
+        self.assertEqual(result.get("skipped"), "no-change")
+
+    def test_changed_app_ids_force_a_put_even_with_same_macs(self) -> None:
+        """Firmware update changes the DPI catalogue: the rule body's
+        ``app_ids`` shifts even though our desired MAC set hasn't.
+        The body-hash short-circuit must catch this and re-PUT.
+        """
+        asyncio.run(self.adapter.apply_doh_block(["aa:bb:cc:dd:ee:01"], names={}))
+        # Simulate new firmware exposing different DoH app IDs.
+        self.app_ids = ["601", "602"]
+        result = asyncio.run(self.adapter.apply_doh_block(["aa:bb:cc:dd:ee:01"], names={}))
+        self.assertEqual(result["action"], "updated")
+        # PUT body must carry the new IDs.
+        _id, body = self.fake_legacy.updates[-1]
+        self.assertEqual(body["app_ids"], ["601", "602"])
+
+    def test_app_discovery_failure_returns_error(self) -> None:
+        async def _boom():
+            raise RuntimeError("network meltdown")
+        self.adapter.get_doh_app_ids = _boom  # type: ignore[assignment]
+        result = asyncio.run(self.adapter.apply_doh_block(
+            ["aa:bb:cc:dd:ee:01"], names={},
+        ))
+        self.assertIn("error", result)
+        self.assertIn("network meltdown", result["error"])
+
+    def test_empty_app_ids_returns_error(self) -> None:
+        async def _none():
+            return []
+        self.adapter.get_doh_app_ids = _none  # type: ignore[assignment]
+        result = asyncio.run(self.adapter.apply_doh_block(
+            ["aa:bb:cc:dd:ee:01"], names={},
+        ))
+        self.assertIn("error", result)
+
+
 class ApplyDohBlockNotYetImplementedTests(unittest.TestCase):
-    """DoH block lands in Phase 4. Until then it still raises."""
+    """Deprecated -- DoH was implemented in Phase 4. Kept as a marker
+    so we notice if anyone removes the implementation by mistake.
+    """
 
     def setUp(self) -> None:
         self._tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
@@ -190,9 +306,15 @@ class ApplyDohBlockNotYetImplementedTests(unittest.TestCase):
     def tearDown(self) -> None:
         Path(self._tmp.name).unlink(missing_ok=True)
 
-    def test_doh_block_raises_not_implemented(self) -> None:
-        with self.assertRaises(NotImplementedError):
-            asyncio.run(self.adapter.apply_doh_block(["aa:bb:cc:dd:ee:01"], names={}))
+    def test_doh_block_does_not_raise(self) -> None:
+        """Smoke-check: even with the toggle OFF, the call returns a
+        dict rather than blowing up.
+        """
+        result = asyncio.run(self.adapter.apply_doh_block(
+            ["aa:bb:cc:dd:ee:01"], names={},
+        ))
+        self.assertIsInstance(result, dict)
+        self.assertFalse(result["enabled"])
 
 
 class ApplyKillSwitchTests(unittest.TestCase):
@@ -477,6 +599,7 @@ def main() -> int:
         loader.loadTestsFromTestCase(CapabilitiesTests),
         loader.loadTestsFromTestCase(FromStoreTests),
         loader.loadTestsFromTestCase(ApplyDnsDirectorTests),
+        loader.loadTestsFromTestCase(ApplyDohBlockTests),
         loader.loadTestsFromTestCase(ApplyDohBlockNotYetImplementedTests),
         loader.loadTestsFromTestCase(ApplyKillSwitchTests),
         loader.loadTestsFromTestCase(StatStaNormalisationTests),
