@@ -699,8 +699,93 @@
       <!-- ============= SETTINGS ============= -->
       <div x-show="tab==='settings'" class="space-y-4 sm:space-y-5">
 
-        <!-- Router integration -->
+        <!-- Router vendor selector -->
         <section class="rounded-2xl ring-1 ring-white/5 bg-slate-900/60 backdrop-blur-sm p-4 sm:p-5">
+          <div class="flex items-start gap-3 mb-4">
+            <div class="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500/40 to-fuchsia-500/30 ring-1 ring-white/10 flex-none">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 6h18M3 12h18M3 18h18"/>
+              </svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <h2 class="text-sm font-medium text-slate-200 uppercase tracking-wider">Router integration</h2>
+              <p class="text-xs text-slate-400 mt-1 leading-relaxed">
+                Pick the router family Guardium should push enforcement to. Different
+                vendors support different stages — the toggles below adapt automatically.
+              </p>
+            </div>
+          </div>
+
+          <div class="grid sm:grid-cols-3 gap-2">
+            <label class="cursor-pointer rounded-xl p-3 ring-1 transition-colors"
+                   :class="settings.router.vendor === 'asus' ? 'ring-indigo-400/50 bg-indigo-500/10' : 'ring-white/5 hover:ring-white/15 bg-slate-950/40'">
+              <div class="flex items-center gap-2">
+                <input type="radio" x-model="settings.router.vendor" value="asus"
+                       class="w-3.5 h-3.5 accent-indigo-500"/>
+                <span class="text-sm font-medium text-slate-200">ASUS</span>
+              </div>
+              <p class="text-[11px] text-slate-400 mt-1 leading-snug">
+                RT-BE88U and other AsusWRT routers. Stages 1 + 2 + 3 supported (Stage 3 via SSH).
+              </p>
+            </label>
+            <label class="cursor-pointer rounded-xl p-3 ring-1 transition-colors"
+                   :class="settings.router.vendor === 'unifi' ? 'ring-indigo-400/50 bg-indigo-500/10' : 'ring-white/5 hover:ring-white/15 bg-slate-950/40'">
+              <div class="flex items-center gap-2">
+                <input type="radio" x-model="settings.router.vendor" value="unifi"
+                       class="w-3.5 h-3.5 accent-indigo-500"/>
+                <span class="text-sm font-medium text-slate-200">UniFi</span>
+                <span class="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 ring-1 ring-amber-400/30">alpha</span>
+              </div>
+              <p class="text-[11px] text-slate-400 mt-1 leading-snug">
+                UDM / UCG / UniFi OS Server + gateway. Stages 1 + 3 supported.
+                Stage 2 (per-MAC DNS Director) unavailable on UniFi.
+              </p>
+            </label>
+            <label class="cursor-pointer rounded-xl p-3 ring-1 transition-colors"
+                   :class="settings.router.vendor === 'none' ? 'ring-indigo-400/50 bg-indigo-500/10' : 'ring-white/5 hover:ring-white/15 bg-slate-950/40'">
+              <div class="flex items-center gap-2">
+                <input type="radio" x-model="settings.router.vendor" value="none"
+                       class="w-3.5 h-3.5 accent-indigo-500"/>
+                <span class="text-sm font-medium text-slate-200">None</span>
+              </div>
+              <p class="text-[11px] text-slate-400 mt-1 leading-snug">
+                DNS-only enforcement. No router integration; "Internet Off" still works at the DNS layer.
+              </p>
+            </label>
+          </div>
+
+          <template x-if="settings.router.capabilities">
+            <div class="mt-4 grid sm:grid-cols-3 gap-2 text-[11px]">
+              <div class="rounded-lg px-3 py-2 ring-1"
+                   :class="settings.router.capabilities.supportsKillSwitch
+                     ? 'ring-emerald-400/30 bg-emerald-500/10 text-emerald-200'
+                     : 'ring-white/5 bg-slate-950/40 text-slate-500'">
+                <div class="font-mono text-[10px] uppercase">Stage 1</div>
+                <div x-text="settings.router.capabilities.supportsKillSwitch ? 'Internet Off — supported' : 'Not supported'"></div>
+              </div>
+              <div class="rounded-lg px-3 py-2 ring-1"
+                   :class="settings.router.capabilities.supportsDnsDirector
+                     ? 'ring-emerald-400/30 bg-emerald-500/10 text-emerald-200'
+                     : 'ring-amber-400/30 bg-amber-500/10 text-amber-200'">
+                <div class="font-mono text-[10px] uppercase">Stage 2</div>
+                <div x-text="settings.router.capabilities.supportsDnsDirector ? 'DNS Director — supported' : 'DNS Director — unavailable'"></div>
+              </div>
+              <div class="rounded-lg px-3 py-2 ring-1"
+                   :class="settings.router.capabilities.supportsDohBlocking
+                     ? 'ring-emerald-400/30 bg-emerald-500/10 text-emerald-200'
+                     : 'ring-white/5 bg-slate-950/40 text-slate-500'">
+                <div class="font-mono text-[10px] uppercase">Stage 3</div>
+                <div x-text="settings.router.capabilities.supportsDohBlocking
+                  ? (settings.router.capabilities.needsSshForDoh ? 'DoH block — supported (SSH)' : 'DoH block — supported (native)')
+                  : 'Not supported'"></div>
+              </div>
+            </div>
+          </template>
+        </section>
+
+        <!-- Router integration -->
+        <section x-show="settings.router.vendor === 'asus'"
+                 class="rounded-2xl ring-1 ring-white/5 bg-slate-900/60 backdrop-blur-sm p-4 sm:p-5">
           <div class="flex items-start gap-3 mb-4">
             <div class="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500/40 to-fuchsia-500/30 ring-1 ring-white/10 flex-none">
               <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
@@ -835,9 +920,9 @@
           </div>
         </section>
 
-        <!-- ============================== DNS Director ============================== -->
+        <!-- ============================== DNS Director (ASUS only) ============================== -->
         <section class="rounded-2xl ring-1 ring-white/5 bg-slate-900/60 backdrop-blur-sm p-4 sm:p-5"
-                 x-show="settings.router.enabled && settings.router.passwordSet">
+                 x-show="settings.router.vendor === 'asus' && settings.router.enabled && settings.router.passwordSet">
           <div class="flex items-start gap-3 mb-4">
             <div class="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-sky-500/40 to-cyan-500/30 ring-1 ring-white/10 flex-none">
               <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
@@ -880,9 +965,9 @@
           </div>
         </section>
 
-        <!-- ============================== SSH + DoH IP blocklist ============================== -->
+        <!-- ============================== SSH + DoH IP blocklist (ASUS only) ============================== -->
         <section class="rounded-2xl ring-1 ring-white/5 bg-slate-900/60 backdrop-blur-sm p-4 sm:p-5"
-                 x-show="settings.router.enabled && settings.router.passwordSet">
+                 x-show="settings.router.vendor === 'asus' && settings.router.enabled && settings.router.passwordSet">
           <div class="flex items-start gap-3 mb-4">
             <div class="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-rose-500/40 to-orange-500/30 ring-1 ring-white/10 flex-none">
               <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
@@ -966,9 +1051,144 @@
           </template>
         </section>
 
+        <!-- ============================== Router (UniFi - alpha) ============================== -->
+        <section x-show="settings.router.vendor === 'unifi'"
+                 class="rounded-2xl ring-1 ring-white/5 bg-slate-900/60 backdrop-blur-sm p-4 sm:p-5">
+          <div class="flex items-start gap-3 mb-4">
+            <div class="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-sky-500/40 to-indigo-500/30 ring-1 ring-white/10 flex-none">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4z"/>
+              </svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 flex-wrap">
+                <h2 class="text-sm font-medium text-slate-200 uppercase tracking-wider">Router (UniFi)</h2>
+                <span class="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 ring-1 ring-amber-400/30">alpha</span>
+              </div>
+              <p class="text-xs text-slate-400 mt-1 leading-relaxed">
+                Connects to your UniFi Network controller (UDM, UCG, UniFi OS Server, or
+                standalone Network Application). Stage&nbsp;1 (kill switch) and Stage&nbsp;3
+                (DoH&nbsp;/&nbsp;DoT block) use native Traffic Rules — no SSH required.
+                Stage&nbsp;2 (per-MAC DNS Director) is not supported by UniFi firmware.
+              </p>
+            </div>
+          </div>
+
+          <div class="grid sm:grid-cols-2 gap-3">
+            <label class="block sm:col-span-2">
+              <span class="text-[11px] uppercase tracking-wider text-slate-400">Controller URL</span>
+              <input x-model="settings.router.unifi.host"
+                     placeholder="https://unifi.lan"
+                     class="mt-1 w-full bg-slate-950/60 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono"/>
+              <span class="text-[10px] text-slate-500 mt-1 block">
+                UniFi&nbsp;OS hosts: <span class="font-mono">https://your-udm.local</span>.
+                Standalone Network Application: <span class="font-mono">https://your-controller:8443</span>.
+              </span>
+            </label>
+            <label class="block">
+              <span class="text-[11px] uppercase tracking-wider text-slate-400">Site</span>
+              <input x-model="settings.router.unifi.site"
+                     placeholder="default"
+                     class="mt-1 w-full bg-slate-950/60 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono"/>
+            </label>
+            <label class="block">
+              <span class="text-[11px] uppercase tracking-wider text-slate-400">
+                Username
+                <span class="ml-1 text-slate-500">(dedicated local admin, NOT Ubiquiti SSO)</span>
+              </span>
+              <input x-model="settings.router.unifi.username"
+                     placeholder="guardium"
+                     autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+                     class="mt-1 w-full bg-slate-950/60 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono"/>
+            </label>
+            <label class="block">
+              <span class="text-[11px] uppercase tracking-wider text-slate-400">
+                Password
+                <span x-show="settings.router.unifi.passwordSet" class="ml-1 text-emerald-300/80">· saved</span>
+              </span>
+              <input x-model="settings.router.unifi.passwordInput"
+                     type="password"
+                     :placeholder="settings.router.unifi.passwordSet ? '••••••••  (leave blank to keep)' : 'local admin password'"
+                     autocomplete="new-password"
+                     class="mt-1 w-full bg-slate-950/60 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono"/>
+            </label>
+            <label class="block sm:col-span-2">
+              <span class="text-[11px] uppercase tracking-wider text-slate-400">
+                API key (optional)
+                <span x-show="settings.router.unifi.apiKeySet" class="ml-1 text-emerald-300/80">· saved</span>
+              </span>
+              <input x-model="settings.router.unifi.apiKeyInput"
+                     type="password"
+                     :placeholder="settings.router.unifi.apiKeySet ? '••••••••  (leave blank to keep)' : 'enables DPI category discovery + gateway-model probe'"
+                     autocomplete="new-password"
+                     class="mt-1 w-full bg-slate-950/60 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono"/>
+              <span class="text-[10px] text-slate-500 mt-1 block">
+                Create one under <span class="font-mono">Settings → Control Plane → Admins &amp; Users → API Keys</span>.
+                Required only on UniFi&nbsp;OS hosts; legacy standalone Network Application doesn't expose this API.
+              </span>
+            </label>
+          </div>
+
+          <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <div class="flex flex-col gap-2">
+              <label class="inline-flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                <input type="checkbox" x-model="settings.router.unifi.verifyTls"
+                       class="w-4 h-4 rounded border-white/20 bg-slate-950/60 accent-indigo-500"/>
+                Verify TLS certificate
+                <span class="text-[10px] text-slate-500">(off by default — UniFi ships self-signed)</span>
+              </label>
+              <label class="inline-flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                <input type="checkbox" x-model="settings.router.unifi.dohBlockEnabled"
+                       class="w-4 h-4 rounded border-white/20 bg-slate-950/60 accent-emerald-500"/>
+                Enable DoH&nbsp;/&nbsp;DoT blocking (Stage&nbsp;3)
+              </label>
+            </div>
+            <div class="flex items-center gap-2">
+              <button @click="testRouter()" :disabled="settings.routerTesting"
+                      class="text-xs px-3 py-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 ring-1 ring-white/10 text-slate-200 disabled:opacity-50">
+                <span x-show="!settings.routerTesting">Test connection</span>
+                <span x-show="settings.routerTesting">Testing…</span>
+              </button>
+              <button @click="saveRouter()" :disabled="settings.routerSaving"
+                      class="text-xs px-3 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white font-medium disabled:opacity-50">
+                <span x-show="!settings.routerSaving">Save</span>
+                <span x-show="settings.routerSaving">Saving…</span>
+              </button>
+            </div>
+          </div>
+
+          <template x-if="settings.routerTestResult">
+            <div class="mt-4 rounded-xl px-3 py-2 text-xs ring-1"
+                 :class="settings.routerTestResult.ok
+                   ? 'bg-emerald-500/10 ring-emerald-400/30 text-emerald-200'
+                   : 'bg-rose-500/10 ring-rose-400/30 text-rose-200'">
+              <div class="font-medium" x-text="settings.routerTestResult.ok ? 'Connected' : 'Failed'"></div>
+              <div class="text-[11px] opacity-80 mt-0.5"
+                   x-text="settings.routerTestResult.message"></div>
+              <template x-if="settings.routerTestResult.ok && settings.routerTestResult.info">
+                <dl class="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[10px] text-emerald-200/80">
+                  <dt>flavour</dt><dd x-text="settings.routerTestResult.info.flavour"></dd>
+                  <dt>site</dt><dd x-text="settings.routerTestResult.info.site"></dd>
+                  <dt>sites</dt><dd x-text="settings.routerTestResult.info.sitesCount"></dd>
+                  <dt>clients</dt><dd x-text="settings.routerTestResult.info.clientsCount"></dd>
+                  <dt>traffic rules</dt><dd x-text="settings.routerTestResult.info.trafficRulesCount"></dd>
+                </dl>
+              </template>
+            </div>
+          </template>
+
+          <div class="mt-4 rounded-lg ring-1 ring-amber-400/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200/90 leading-relaxed">
+            <span class="font-medium">Stage&nbsp;2 caveat:</span> UniFi firmware has no per-MAC DNS Director
+            primitive. Use DHCP-level DNS pinning (LAN&nbsp;→ DHCP DNS) or a separate VLAN to force
+            kid-cohort devices onto Guardium's DNS, then rely on Stages&nbsp;1&nbsp;+&nbsp;3 above for the
+            hardening layer.
+          </div>
+        </section>
+
         <!-- ============================== Apply now / live status ============================== -->
         <section class="rounded-2xl ring-1 ring-white/5 bg-slate-900/40 p-4 sm:p-5"
-                 x-show="settings.router.enabled && settings.router.passwordSet">
+                 x-show="(settings.router.vendor === 'asus' && settings.router.enabled && settings.router.passwordSet)
+                         || (settings.router.vendor === 'unifi' && settings.router.unifi?.host && settings.router.unifi?.passwordSet)">
           <div class="flex items-center justify-between gap-3">
             <div>
               <h3 class="text-xs uppercase tracking-wider text-slate-400">Apply now</h3>
@@ -1206,6 +1426,59 @@
                 + New schedule
               </button>
             </div>
+
+            <!-- Scope indicator: a schedule attached to a person only fires on
+                 devices linked to that person. Surface this prominently so
+                 parents never wonder why a schedule "did nothing". -->
+            <div x-show="personDrawer.person.schedules && personDrawer.person.schedules.length"
+                 class="mb-2 rounded-xl ring-1 px-3 py-2 flex items-start gap-2 text-[12px]"
+                 :class="(personDrawer.person.deviceCount || 0) > 0
+                          ? 'ring-emerald-400/30 bg-emerald-500/5 text-emerald-100'
+                          : 'ring-amber-400/40 bg-amber-500/10 text-amber-100'">
+              <svg x-show="(personDrawer.person.deviceCount || 0) > 0" class="w-4 h-4 flex-none mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+              </svg>
+              <svg x-show="(personDrawer.person.deviceCount || 0) === 0" class="w-4 h-4 flex-none mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M4.93 19h14.14c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.2 16c-.77 1.33.19 3 1.73 3z"/>
+              </svg>
+              <div class="leading-snug">
+                <template x-if="(personDrawer.person.deviceCount || 0) > 0">
+                  <span>
+                    Applies to <span class="font-semibold" x-text="personDrawer.person.deviceCount"></span>
+                    device<span x-show="personDrawer.person.deviceCount !== 1">s</span>
+                    assigned to <span class="font-semibold" x-text="personDrawer.person.name"></span>.
+                  </span>
+                </template>
+                <template x-if="(personDrawer.person.deviceCount || 0) === 0">
+                  <span>
+                    <span class="font-semibold">These schedules won't do anything yet.</span>
+                    Assign at least one device to
+                    <span class="font-semibold" x-text="personDrawer.person.name"></span>
+                    under <span class="text-amber-200/80">Devices</span> above — schedules attached to a person
+                    only apply to that person's devices.
+                  </span>
+                </template>
+              </div>
+            </div>
+
+            <!-- "Active right now" callout: reinforces that schedules are being enforced
+                 in real time, and tells the parent which one is firing this minute. -->
+            <template x-if="activeScheduleFor(personDrawer.person)">
+              <div class="mb-2 rounded-xl ring-1 ring-amber-400/30 bg-amber-500/10 px-3 py-2 flex items-center gap-2 text-[12px] text-amber-100">
+                <svg class="w-4 h-4 flex-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <span class="font-medium" x-text="activeScheduleFor(personDrawer.person).name || 'Schedule'"></span>
+                <span class="text-amber-200/70" x-text="'enforcing now · until ' + formatHM(activeScheduleFor(personDrawer.person).endMin)"></span>
+              </div>
+            </template>
+
+            <p class="text-[11px] text-slate-500 mb-2 leading-relaxed">
+              Stack as many schedules as you like — they all run side-by-side. If two
+              overlap at the same minute, the most recently added one wins.
+              <span class="text-slate-400">Tap a preset to add it; tap again to disable.</span>
+            </p>
+
             <div class="rounded-xl ring-1 ring-white/5 bg-slate-900/60 divide-y divide-white/5" x-show="personDrawer.person.schedules && personDrawer.person.schedules.length">
               <template x-for="s in personDrawer.person.schedules" :key="'sc-'+s.id">
                 <div class="flex items-center gap-3 px-3 py-2.5">
@@ -1215,7 +1488,14 @@
                     <span :class="s.enabled ? 'translate-x-4' : 'translate-x-0'" class="block w-4 h-4 rounded-full bg-white transition-transform"></span>
                   </button>
                   <div class="flex-1 min-w-0">
-                    <div class="text-sm font-medium" x-text="s.name || 'Schedule'"></div>
+                    <div class="flex items-center gap-1.5">
+                      <span class="text-sm font-medium" x-text="s.name || 'Schedule'"></span>
+                      <!-- "Active right now" pip on the matching row. -->
+                      <span x-show="activeScheduleFor(personDrawer.person) && activeScheduleFor(personDrawer.person).id === s.id"
+                            class="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-200 ring-1 ring-amber-400/30">
+                        active
+                      </span>
+                    </div>
                     <div class="text-[11px] text-slate-400" x-text="weekdayLabel(s.weekdayMask) + ' · ' + formatHM(s.startMin) + ' to ' + formatHM(s.endMin) + ' · ' + (profileLabel(s.profileId) || 'Internet off')"></div>
                   </div>
                   <button @click="openScheduleEditor(s, 'person', personDrawer.person.id)" class="text-[11px] text-slate-400 hover:text-slate-200">Edit</button>
@@ -1224,12 +1504,42 @@
               </template>
             </div>
             <div x-show="!personDrawer.person.schedules || !personDrawer.person.schedules.length" class="text-sm text-slate-500 italic">
-              No schedules yet. Use a preset or "+ New schedule".
+              No schedules yet. Pick one or more presets below, or use "+ New schedule".
             </div>
+
+            <!-- Preset chips. Each one renders its own enabled-state badge so the
+                 parent can tell at a glance which presets are already in play. -->
             <div class="flex flex-wrap gap-2 mt-2">
-              <button @click="addSchedulePreset(personDrawer.person, 'bedtime')" class="text-[11px] px-2 py-1 rounded-lg bg-slate-800/70 ring-1 ring-white/5 hover:bg-slate-700/70">🌙 Bedtime 9pm-7am</button>
-              <button @click="addSchedulePreset(personDrawer.person, 'school')" class="text-[11px] px-2 py-1 rounded-lg bg-slate-800/70 ring-1 ring-white/5 hover:bg-slate-700/70">📚 School hours</button>
-              <button @click="addSchedulePreset(personDrawer.person, 'dinner')" class="text-[11px] px-2 py-1 rounded-lg bg-slate-800/70 ring-1 ring-white/5 hover:bg-slate-700/70">🍝 Dinner 6-7pm</button>
+              <template x-for="preset in schedulePresets" :key="'pre-'+preset.kind">
+                <button @click="togglePresetSchedule(personDrawer.person, preset.kind)"
+                        :class="(() => {
+                          const st = schedulePresetState(personDrawer.person, preset.kind);
+                          if (st.exists && st.enabled)  return 'bg-emerald-500/15 ring-emerald-400/40 text-emerald-100 hover:bg-emerald-500/25';
+                          if (st.exists && !st.enabled) return 'bg-slate-800/40 ring-white/10 text-slate-400 hover:bg-slate-700/60';
+                          return 'bg-slate-800/70 ring-white/5 text-slate-200 hover:bg-slate-700/70';
+                        })()"
+                        :title="(() => {
+                          const st = schedulePresetState(personDrawer.person, preset.kind);
+                          if (st.exists && st.enabled)  return 'Already added — click to disable';
+                          if (st.exists && !st.enabled) return 'Saved but disabled — click to re-enable';
+                          return 'Click to add this preset';
+                        })()"
+                        class="inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-lg ring-1 transition-colors">
+                  <span x-text="preset.icon"></span>
+                  <span><span x-text="preset.label"></span><span class="text-slate-400/70 ml-1" x-text="preset.sub"></span></span>
+                  <!-- Tick badge: green when added+enabled, muted when added+disabled, absent when not yet added. -->
+                  <template x-if="schedulePresetState(personDrawer.person, preset.kind).exists">
+                    <span :class="schedulePresetState(personDrawer.person, preset.kind).enabled
+                            ? 'bg-emerald-400/90 text-emerald-950 ring-emerald-300/40'
+                            : 'bg-slate-700 text-slate-400 ring-white/5'"
+                          class="ml-0.5 inline-flex items-center justify-center w-3.5 h-3.5 rounded-full ring-1">
+                      <svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 12l5 5L20 7"/>
+                      </svg>
+                    </span>
+                  </template>
+                </button>
+              </template>
             </div>
           </section>
 

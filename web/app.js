@@ -96,6 +96,23 @@ window.dashboard = function () {
     personDrawer: {open: false, person: null},
     personEditor: {open: false, id: null, name: '', avatar: '🧒',
                     color: 'indigo', baseProfileId: null},
+    // Canonical schedule presets. Single source of truth: the preset
+    // chips in the person drawer render from this list, the click
+    // handlers find existing rows by matching ``name`` exactly, and
+    // ``addSchedulePreset`` POSTs the preset's fields verbatim.
+    schedulePresets: [
+      {kind: 'bedtime',      icon: '🌙', label: 'Bedtime',       sub: '9pm-7am',
+       name: 'Bedtime',       weekdayMask: 0x7F, startMin: 21*60,    endMin: 7*60,  profileId: null},
+      {kind: 'beforeSchool', icon: '🌅', label: 'Before school', sub: '6-9am',
+       name: 'Before school', weekdayMask: 0x1F, startMin: 6*60,     endMin: 9*60,  profileId: null},
+      {kind: 'school',       icon: '📚', label: 'School hours',  sub: '9am-3pm · no streaming',
+       name: 'School hours',  weekdayMask: 0x1F, startMin: 9*60,     endMin: 15*60, profileId: 'no-streaming'},
+      {kind: 'afterSchool',  icon: '🎒', label: 'After school',  sub: '3:30-9pm',
+       name: 'After school',  weekdayMask: 0x1F, startMin: 15*60+30, endMin: 21*60, profileId: null},
+      {kind: 'dinner',       icon: '🍝', label: 'Dinner',        sub: '6-7pm',
+       name: 'Dinner',        weekdayMask: 0x7F, startMin: 18*60,    endMin: 19*60, profileId: null},
+    ],
+
     scheduleDrawer: {open: false, id: null, targetKind: 'person', targetId: null,
                       name: '', weekdayMask: 0x7F, startMin: 21*60, endMin: 7*60,
                       profileId: null, enabled: true},
@@ -108,14 +125,30 @@ window.dashboard = function () {
 
     settings: {
       router: {
+        // Vendor selector: 'asus' | 'unifi' | 'none'. Drives which
+        // sub-form is rendered and which API fields are validated.
+        vendor: 'none',
+        // Capabilities of the active adapter (populated from
+        // /api/router/capabilities); used to grey out stages the
+        // vendor doesn't support.
+        capabilities: null,
+        // ASUS fields (existing).
         host: '', username: '', passwordInput: '', passwordSet: false,
         scheme: 'http', port: null, enabled: false,
-        // Stage 2 - DNS Director
+        // Stage 2 - DNS Director (ASUS)
         dnsDirectorEnabled: false, dnsDirectorIp: '',
-        // Stage 3 - SSH + DoH blocklist
+        // Stage 3 - SSH + DoH blocklist (ASUS)
         sshEnabled: false, sshPort: 2222,
         sshPasswordInput: '', sshPasswordSet: false,
         dohBlockEnabled: false,
+        // UniFi fields (alpha).
+        unifi: {
+          host: '', username: '', site: 'default',
+          passwordInput: '', passwordSet: false,
+          apiKeyInput: '', apiKeySet: false,
+          verifyTls: false,
+          dohBlockEnabled: false,
+        },
       },
       routerLoaded: false,
       routerSaving: false,
@@ -947,18 +980,43 @@ window.dashboard = function () {
       } catch (e) { this.error = e.message; }
     },
 
+    // Preset state -- "is there already a schedule on this person with
+    // the preset's canonical name, and is it currently enabled?" Used
+    // by the chip row in the person drawer to draw the tick badge and
+    // pick the right click handler.
+    schedulePresetState(person, kind) {
+      const def = this.schedulePresets.find(p => p.kind === kind);
+      if (!def || !person) return {exists: false, enabled: false, schedule: null};
+      const match = (person.schedules || []).find(s => (s.name || '') === def.name);
+      if (!match) return {exists: false, enabled: false, schedule: null};
+      return {exists: true, enabled: !!match.enabled, schedule: match};
+    },
+
+    // Click handler for the preset chips. Idempotent: if the preset
+    // is already saved for this person, toggling re-enables a
+    // previously-disabled row or disables an enabled one (mirroring
+    // the green pill toggle in the row list below). If the preset
+    // doesn't exist yet, create it and enable it.
+    async togglePresetSchedule(person, kind) {
+      const st = this.schedulePresetState(person, kind);
+      if (st.exists) {
+        return this.toggleSchedule(st.schedule);
+      }
+      return this.addSchedulePreset(person, kind);
+    },
+
     async addSchedulePreset(person, kind) {
-      const presets = {
-        bedtime: {name: 'Bedtime', weekdayMask: 0x7F, startMin: 21*60, endMin: 7*60, profileId: null},
-        school:  {name: 'School hours', weekdayMask: 0x1F, startMin: 9*60, endMin: 15*60, profileId: 'no-streaming'},
-        dinner:  {name: 'Dinner', weekdayMask: 0x7F, startMin: 18*60, endMin: 19*60, profileId: null},
-      };
-      const preset = presets[kind];
+      const preset = this.schedulePresets.find(p => p.kind === kind);
       if (!preset) return;
       try {
         await this.api('/api/schedules', {method:'POST', body: JSON.stringify({
           targetKind: 'person', targetId: String(person.id),
-          ...preset, enabled: true,
+          name: preset.name,
+          weekdayMask: preset.weekdayMask,
+          startMin: preset.startMin,
+          endMin: preset.endMin,
+          profileId: preset.profileId,
+          enabled: true,
         })});
         await this.refresh({silent:true});
       } catch (e) { this.error = e.message; }
@@ -1094,6 +1152,8 @@ window.dashboard = function () {
     },
 
     _absorbRouterCfg(cfg) {
+      this.settings.router.vendor = cfg.vendor || 'none';
+      this.settings.router.capabilities = cfg.capabilities || null;
       this.settings.router.host = cfg.host || '';
       this.settings.router.username = cfg.username || '';
       this.settings.router.scheme = cfg.scheme || 'http';
@@ -1106,6 +1166,14 @@ window.dashboard = function () {
       this.settings.router.sshPort = cfg.sshPort || 2222;
       this.settings.router.sshPasswordSet = !!cfg.sshPasswordSet;
       this.settings.router.dohBlockEnabled = !!cfg.dohBlockEnabled;
+      const u = cfg.unifi || {};
+      this.settings.router.unifi.host = u.host || '';
+      this.settings.router.unifi.username = u.username || '';
+      this.settings.router.unifi.site = u.site || 'default';
+      this.settings.router.unifi.verifyTls = !!u.verifyTls;
+      this.settings.router.unifi.passwordSet = !!u.passwordSet;
+      this.settings.router.unifi.apiKeySet = !!u.apiKeySet;
+      this.settings.router.unifi.dohBlockEnabled = !!u.dohBlockEnabled;
     },
 
     async loadRouterSettings() {
@@ -1114,8 +1182,12 @@ window.dashboard = function () {
         this._absorbRouterCfg(r.router || {});
         this.settings.router.passwordInput = '';
         this.settings.router.sshPasswordInput = '';
+        this.settings.router.unifi.passwordInput = '';
+        this.settings.router.unifi.apiKeyInput = '';
         this.settings.routerLoaded = true;
-        if (this.settings.router.enabled && this.settings.router.passwordSet) {
+        if (this.settings.router.vendor === 'asus'
+            && this.settings.router.enabled
+            && this.settings.router.passwordSet) {
           this.loadRouterClients();
         }
       } catch (e) {
@@ -1128,6 +1200,9 @@ window.dashboard = function () {
       this.settings.routerTestResult = null;
       try {
         const body = {
+          vendor: this.settings.router.vendor || 'none',
+          // ASUS fields are always included so toggling vendor doesn't
+          // wipe them out; the server only persists what changes.
           host: this.settings.router.host || '',
           username: this.settings.router.username || '',
           scheme: this.settings.router.scheme || 'http',
@@ -1139,17 +1214,36 @@ window.dashboard = function () {
           sshPort: this.settings.router.sshPort || 2222,
           dohBlockEnabled: !!this.settings.router.dohBlockEnabled,
         };
-        // Only send passwords when the user typed something. Empty string
-        // explicitly clears.
+        // ASUS passwords: send only when user typed something (or
+        // explicitly empty to clear).
         const pwd = this.settings.router.passwordInput;
         if (pwd && pwd.length) body.password = pwd;
         const sshPwd = this.settings.router.sshPasswordInput;
         if (sshPwd && sshPwd.length) body.sshPassword = sshPwd;
+
+        // UniFi sub-block.
+        const u = this.settings.router.unifi;
+        body.unifi = {
+          host: u.host || '',
+          username: u.username || '',
+          site: u.site || 'default',
+          verifyTls: !!u.verifyTls,
+          dohBlockEnabled: !!u.dohBlockEnabled,
+        };
+        if (u.passwordInput && u.passwordInput.length) {
+          body.unifi.password = u.passwordInput;
+        }
+        if (u.apiKeyInput && u.apiKeyInput.length) {
+          body.unifi.apiKey = u.apiKeyInput;
+        }
+
         const r = await this.api('/api/settings/router',
           {method: 'PUT', body: JSON.stringify(body)});
         this._absorbRouterCfg(r.router || {});
         this.settings.router.passwordInput = '';
         this.settings.router.sshPasswordInput = '';
+        this.settings.router.unifi.passwordInput = '';
+        this.settings.router.unifi.apiKeyInput = '';
       } catch (e) {
         this.error = e.message;
       } finally {
@@ -1199,34 +1293,51 @@ window.dashboard = function () {
       this.settings.routerTesting = true;
       this.settings.routerTestResult = null;
       try {
-        // If the user typed a new password but hasn't saved yet, save first
-        // so the test runs against the credentials they actually intend.
-        if (this.settings.router.passwordInput) {
+        // If the user typed a new password (or API key, for UniFi) but
+        // hasn't saved yet, save first so the test runs against the
+        // credentials they actually intend.
+        const needsSave =
+          this.settings.router.passwordInput
+          || this.settings.router.unifi.passwordInput
+          || this.settings.router.unifi.apiKeyInput;
+        if (needsSave) {
           await this.saveRouter();
         }
         const r = await this.api('/api/settings/router/test', {method: 'POST'});
         const info = r.info || {};
         const parts = [];
-        if (info.model) parts.push(info.model);
-        if (info.firmware) parts.push('fw ' + info.firmware);
-        if (info.lanIp) parts.push('LAN ' + info.lanIp);
-        // If the server auto-detected a different scheme/port, mirror that
-        // back into the form and tell the user.
-        if (r.detected) {
-          const oldScheme = this.settings.router.scheme || 'http';
-          const oldPort = this.settings.router.port || null;
-          if (r.detected.scheme !== oldScheme ||
-              String(r.detected.port) !== String(oldPort)) {
-            this.settings.router.scheme = r.detected.scheme;
-            this.settings.router.port = r.detected.port;
-            parts.push(`auto-detected ${r.detected.scheme}://${r.detected.port}`);
+        if (r.vendor === 'unifi') {
+          // UniFi summary line.
+          if (info.flavour) parts.push(info.flavour);
+          if (info.site) parts.push(`site ${info.site}`);
+          if (typeof info.clientsCount === 'number') {
+            parts.push(`${info.clientsCount} client(s)`);
+          }
+          if (typeof info.trafficRulesCount === 'number') {
+            parts.push(`${info.trafficRulesCount} traffic rule(s)`);
+          }
+        } else {
+          // ASUS summary line + auto-detected scheme/port mirror-back.
+          if (info.model) parts.push(info.model);
+          if (info.firmware) parts.push('fw ' + info.firmware);
+          if (info.lanIp) parts.push('LAN ' + info.lanIp);
+          if (r.detected) {
+            const oldScheme = this.settings.router.scheme || 'http';
+            const oldPort = this.settings.router.port || null;
+            if (r.detected.scheme !== oldScheme ||
+                String(r.detected.port) !== String(oldPort)) {
+              this.settings.router.scheme = r.detected.scheme;
+              this.settings.router.port = r.detected.port;
+              parts.push(`auto-detected ${r.detected.scheme}://${r.detected.port}`);
+            }
           }
         }
         this.settings.routerTestResult = {
           ok: true,
           message: parts.join(' · ') || 'Login OK',
+          info: info,
         };
-        if (this.settings.router.enabled) {
+        if (this.settings.router.vendor === 'asus' && this.settings.router.enabled) {
           this.loadRouterClients();
         }
       } catch (e) {

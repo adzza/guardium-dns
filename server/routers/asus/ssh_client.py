@@ -2,8 +2,8 @@
 
 Used as Stage 3 of the parental-controls escalation:
 
-  Stage 1 (router_asus.py)  - block whole MACs at L2 ("Internet Off")
-  Stage 2 (router_asus.py)  - per-MAC DNS redirect (DNS Director)
+  Stage 1 (http_client.py)  - block whole MACs at L2 ("Internet Off")
+  Stage 2 (http_client.py)  - per-MAC DNS redirect (DNS Director)
   Stage 3 (this module)     - per-MAC iptables drops to known DoH/DoT IPs,
                               defeats Smart-TV apps with embedded DoH
                               clients on a softer profile (e.g. "no

@@ -696,8 +696,10 @@ guardium-dns/
 │   ├── sampler.py        5min activity sampler (active-minutes per device)
 │   ├── hostnames.py      LAN gateway PTR resolver
 │   ├── apps.py           App/category usage rollups
-│   ├── router_asus.py    AsusWRT HTTP client (Stages 1+2)
-│   ├── router_ssh.py     AsusWRT SSH client (Stage 3)
+│   ├── routers/          Vendor-agnostic router adapters
+│   │   ├── base.py       RouterAdapter contract + Capabilities
+│   │   ├── registry.py   Vendor selection factory
+│   │   └── asus/         AsusWRT adapter (HTTP for Stages 1+2, SSH for Stage 3)
 │   ├── oui.py            IEEE OUI vendor lookup
 │   ├── fingerprint.py    DNS-query-pattern device-type rules
 │   ├── store.py          SQLite store

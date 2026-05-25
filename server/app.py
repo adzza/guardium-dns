@@ -75,8 +75,24 @@ from . import overrides as ov
 from . import profiles
 from .hostnames import HostnameResolver
 from .reconciler import Reconciler, trace_to_dict
-from .router_asus import AsusRouterClient, AsusRouterError, detect_router_endpoint
-from .router_ssh import AsusSshClient, AsusSshError, SshConfig
+from .routers.asus import (
+    AsusRouterClient,
+    AsusRouterError,
+    AsusSshClient,
+    AsusSshError,
+    SshConfig,
+    detect_router_endpoint,
+)
+from .routers.registry import (
+    VENDOR_SETTING_KEY,
+    get_adapter as get_router_adapter,
+)
+from .routers.unifi import UNIFI_KEYS
+from .routers.unifi.legacy_api import (
+    UnifiAuthError,
+    UnifiError,
+    UnifiLegacyApi,
+)
 from .sampler import Sampler
 from .store import Store
 from .technitium import TechnitiumClient, TechnitiumConfig, TechnitiumError
@@ -268,8 +284,7 @@ async def lifespan(app: FastAPI):
         app.state.reconciler = Reconciler(
             store,
             app.state.service_client,
-            router_factory=build_router_client,
-            ssh_factory=build_ssh_config,
+            adapter_factory=lambda: get_router_adapter(store, secrets),
         )
         app.state.sampler = Sampler(store, app.state.service_client)
         await app.state.reconciler.start()
@@ -1615,7 +1630,27 @@ async def api_family_resume(
 
 # ---- routes: settings (router) ---------------------------------------------
 
+VALID_VENDORS = {"asus", "unifi", "none"}
+
+
+class UnifiSettingsPayload(BaseModel):
+    """UniFi-specific fields. Mirrors the ASUS top-level fields but
+    kept under its own object so the two vendor configs don't collide.
+    """
+    host: str | None = None
+    username: str | None = None
+    password: str | None = None     # write-only; null=leave, ""=clear
+    site: str | None = None
+    apiKey: str | None = None       # write-only; null=leave, ""=clear
+    verifyTls: bool | None = None
+    dohBlockEnabled: bool | None = None
+
+
 class RouterSettingsPayload(BaseModel):
+    # Vendor selector: which adapter runs in the reconciler.
+    vendor: str | None = Field(default=None, pattern=r"^(asus|unifi|none)$")
+    # ASUS fields stay at the top level for backwards compatibility
+    # with older frontends that don't know about the multi-vendor split.
     host: str | None = None
     username: str | None = None
     password: str | None = None  # write-only; null = leave unchanged, "" = clear
@@ -1630,11 +1665,52 @@ class RouterSettingsPayload(BaseModel):
     sshPort: int | None = Field(default=None, ge=1, le=65535)
     sshPassword: str | None = None  # null = unchanged, "" = clear
     dohBlockEnabled: bool | None = None
+    # UniFi nested object.
+    unifi: UnifiSettingsPayload | None = None
+
+
+def _public_unifi_settings() -> dict[str, Any]:
+    return {
+        "host": store.get_setting(UNIFI_KEYS["host"]),
+        "username": store.get_setting(UNIFI_KEYS["username"]),
+        "site": store.get_setting(UNIFI_KEYS["site"]) or "default",
+        "verifyTls": store.get_setting(UNIFI_KEYS["verify_tls"]) == "1",
+        "passwordSet": bool(secrets.get(UNIFI_KEYS["password"])),
+        "apiKeySet": bool(secrets.get(UNIFI_KEYS["api_key"])),
+        "dohBlockEnabled": store.get_setting(UNIFI_KEYS["doh_block_enabled"]) == "1",
+    }
+
+
+def _public_capabilities() -> dict[str, Any] | None:
+    """Capabilities of the *currently configured* router adapter.
+
+    Returns ``None`` when no router is configured (``router.vendor =
+    none`` or unset and ASUS host isn't set). The UI uses this to grey
+    out per-stage toggles the active vendor doesn't support.
+    """
+    adapter = get_router_adapter(store, secrets)
+    if adapter is None:
+        return None
+    caps = adapter.capabilities
+    return {
+        "vendor": adapter.vendor,
+        "supportsKillSwitch":  caps.supports_kill_switch,
+        "supportsDnsDirector": caps.supports_dns_director,
+        "supportsDohBlocking": caps.supports_doh_blocking,
+        "needsSshForDoh":      caps.needs_ssh_for_doh,
+    }
 
 
 def _public_router_settings() -> dict[str, Any]:
     cfg = _router_settings()
+    saved_vendor = store.get_setting(VENDOR_SETTING_KEY)
+    # The registry auto-migrates legacy ASUS installs; mirror that here
+    # so a fresh GET right after upgrade shows the inferred vendor.
+    if not saved_vendor and cfg["host"]:
+        saved_vendor = "asus"
     return {
+        "vendor": saved_vendor or "none",
+        "capabilities": _public_capabilities(),
         "host": cfg["host"],
         "username": cfg["username"],
         "scheme": cfg["scheme"],
@@ -1649,6 +1725,8 @@ def _public_router_settings() -> dict[str, Any]:
         "sshPort": int(cfg["ssh_port"]) if cfg["ssh_port"] and cfg["ssh_port"].isdigit() else None,
         "sshPasswordSet": bool(secrets.get(ROUTER_KEYS["ssh_password"])),
         "dohBlockEnabled": bool(cfg["doh_block_enabled"]),
+        # UniFi block.
+        "unifi": _public_unifi_settings(),
     }
 
 
@@ -1663,6 +1741,12 @@ async def api_router_put(
     actor: str = Depends(get_actor),
     _token: str = Depends(require_token),
 ) -> dict[str, Any]:
+    # Vendor selector. "none" is persisted as an explicit opt-out
+    # rather than deleting the row -- otherwise the registry's
+    # legacy-ASUS auto-detect would silently re-promote a user who
+    # picked "None" back to "asus" on the very next tick.
+    if payload.vendor is not None:
+        store.set_setting(VENDOR_SETTING_KEY, payload.vendor)
     if payload.host is not None:
         host = payload.host.strip()
         store.set_setting(ROUTER_KEYS["host"], host or None)
@@ -1697,10 +1781,35 @@ async def api_router_put(
         store.set_setting(ROUTER_KEYS["doh_block_enabled"],
                           "1" if payload.dohBlockEnabled else "0")
 
+    # UniFi nested fields.
+    if payload.unifi is not None:
+        u = payload.unifi
+        if u.host is not None:
+            store.set_setting(UNIFI_KEYS["host"], u.host.strip() or None)
+        if u.username is not None:
+            store.set_setting(UNIFI_KEYS["username"], u.username.strip() or None)
+        if u.password is not None:
+            secrets.set(UNIFI_KEYS["password"], u.password if u.password else None)
+        if u.site is not None:
+            store.set_setting(UNIFI_KEYS["site"], u.site.strip() or None)
+        if u.apiKey is not None:
+            secrets.set(UNIFI_KEYS["api_key"], u.apiKey if u.apiKey else None)
+        if u.verifyTls is not None:
+            store.set_setting(UNIFI_KEYS["verify_tls"], "1" if u.verifyTls else "0")
+        if u.dohBlockEnabled is not None:
+            store.set_setting(UNIFI_KEYS["doh_block_enabled"],
+                              "1" if u.dohBlockEnabled else "0")
+
+    # Audit. Hide password fields from the JSON dump.
+    redacted = payload.model_dump()
+    redacted.pop("password", None)
+    if isinstance(redacted.get("unifi"), dict):
+        redacted["unifi"].pop("password", None)
+        redacted["unifi"].pop("apiKey", None)
     store.log_audit(actor=actor, ip=None, action="router.settings",
                      detail=json.dumps({
-                         k: v for k, v in payload.model_dump().items()
-                         if k != "password" and v is not None
+                         k: v for k, v in redacted.items()
+                         if v is not None
                      }))
     # Push reconcile so the next tick honours new settings (or stops
     # honouring old ones, if disabled).
@@ -1708,10 +1817,50 @@ async def api_router_put(
     return {"router": _public_router_settings()}
 
 
+@app.get("/api/router/capabilities")
+async def api_router_capabilities(
+    _token: str = Depends(require_token),
+) -> dict[str, Any]:
+    """Capabilities of the currently configured adapter (or ``null``).
+
+    The Settings UI uses this to enable/disable per-stage toggles so
+    users only see options their hardware actually supports. The
+    response is intentionally tiny -- no creds, no live state.
+    """
+    return {"capabilities": _public_capabilities()}
+
+
 @app.post("/api/settings/router/test")
 async def api_router_test(
     _token: str = Depends(require_token),
 ) -> dict[str, Any]:
+    """Probe the configured router with a connect-and-list round-trip.
+
+    Dispatches by ``router.vendor`` so the UI's "Test connection"
+    button always probes the active adapter. For ASUS this also
+    auto-persists the working scheme/port the user can't necessarily
+    know up-front.
+    """
+    vendor = (store.get_setting(VENDOR_SETTING_KEY) or "").strip().lower()
+    if not vendor:
+        # Legacy: infer ASUS when an ASUS host is set but the vendor
+        # selector hasn't been clicked yet.
+        if store.get_setting(ROUTER_KEYS["host"]):
+            vendor = "asus"
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="no router vendor selected. Pick ASUS or UniFi in Settings first.",
+            )
+
+    if vendor == "asus":
+        return await _test_router_asus()
+    if vendor == "unifi":
+        return await _test_router_unifi()
+    raise HTTPException(status_code=400, detail=f"unknown vendor: {vendor!r}")
+
+
+async def _test_router_asus() -> dict[str, Any]:
     cfg = _router_settings()
     if not (cfg["host"] and cfg["username"]):
         raise HTTPException(status_code=400, detail="host and username are required")
@@ -1740,8 +1889,47 @@ async def api_router_test(
         store.set_setting(ROUTER_KEYS["port"], str(detected_port))
     return {
         "ok": True,
+        "vendor": "asus",
         "info": result["info"],
         "detected": {"scheme": detected_scheme, "port": detected_port},
+    }
+
+
+async def _test_router_unifi() -> dict[str, Any]:
+    host = store.get_setting(UNIFI_KEYS["host"])
+    username = store.get_setting(UNIFI_KEYS["username"])
+    password = secrets.get(UNIFI_KEYS["password"])
+    if not (host and username):
+        raise HTTPException(status_code=400, detail="UniFi host and username are required")
+    if not password:
+        raise HTTPException(status_code=400, detail="UniFi password not saved")
+    site = store.get_setting(UNIFI_KEYS["site"]) or "default"
+    verify_tls = store.get_setting(UNIFI_KEYS["verify_tls"]) == "1"
+
+    try:
+        async with UnifiLegacyApi(
+            host=host, username=username, password=password,
+            site=site, verify_tls=verify_tls,
+        ) as api:
+            sites = await api.list_sites()
+            clients = await api.list_clients()
+            rules = await api.list_traffic_rules()
+            flavour = api.flavour
+    except UnifiAuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    except UnifiError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from None
+
+    return {
+        "ok": True,
+        "vendor": "unifi",
+        "info": {
+            "flavour": flavour,
+            "site": site,
+            "sitesCount": len(sites),
+            "clientsCount": len(clients),
+            "trafficRulesCount": len(rules),
+        },
     }
 
 
