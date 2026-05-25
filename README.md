@@ -147,6 +147,11 @@ tap.
   its HTTP API. We never patch Technitium's binaries, configs on disk, or
   systemd unit. Technitium upgrades cannot break Guardium, and removing
   Guardium leaves Technitium untouched.
+- **One-command updates** — the installer drops a `guardium-update` CLI
+  onto the host. The dashboard polls GitHub on a 30-minute cadence and
+  surfaces a badge in the nav when a newer commit lands; running the CLI
+  pulls, redeploys, restarts the service, and **auto-rolls back** if the
+  new build fails its health check.
 
 ---
 
@@ -614,6 +619,108 @@ router config is never touched.
 
 ---
 
+## Updating
+
+Guardium is moving fast. The intended update workflow is intentionally
+boring: you don't reinstall, you don't `git pull` by hand, you don't run
+`pip install -r requirements.txt` yourself. There's a single command on
+the host, and the dashboard tells you when to run it.
+
+### How you find out an update exists
+
+The version of Guardium currently installed is shown as a **pill in the
+top-right of the navigation bar** (e.g. `v0.1.0` or a short Git SHA like
+`3ba53fa`). The backend polls GitHub for the latest commit on your
+configured channel every ~30 minutes and caches the result; if the
+remote is ahead of you, the pill flips amber and grows a small ⬆ arrow
+badge.
+
+Click the pill at any time to open the **update details modal**. It
+shows:
+
+- What you have installed (tag / SHA / commit message / commit date).
+- What's on the configured channel (`main` by default), with a
+  **"See what changed →"** link straight to the GitHub compare view.
+- The two commands you'd use to update (copyable, with one-click copy):
+  one for the Guardium host itself, one to run from your workstation
+  over SSH.
+- A **Check now** button that forces an immediate GitHub poll.
+- A **Snooze** button that suppresses the badge until a *newer* commit
+  lands (the pill itself stays available so you can always reopen the
+  modal).
+
+No data leaves your network at any point other than authenticated
+GitHub API calls to `api.github.com/repos/<owner>/<repo>/commits/...`.
+
+### Running the update — `guardium-update`
+
+The installer drops a wrapper script at `/usr/local/bin/guardium-update`.
+On the Guardium host:
+
+```bash
+sudo guardium-update
+```
+
+Or from your workstation, without logging in:
+
+```bash
+ssh root@<your-guardium-host> 'guardium-update'
+```
+
+The script:
+
+1. Snapshots the currently installed commit (for rollback).
+2. `git fetch && git checkout` of the configured `UPDATE_CHANNEL`
+   (defaults to `main`) — if the install directory isn't already a git
+   checkout, the script bootstraps one in place from `GITHUB_REPO`.
+3. Re-runs `deploy/install.sh` to pick up any new dependencies, service
+   file changes, or CLI script updates.
+4. Restarts `dns-dashboard.service` and performs an HTTP health check
+   on `127.0.0.1:8080`.
+5. **On failure**, automatically checks out the previous commit, reruns
+   the installer, and restarts the service — so a bad commit doesn't
+   leave you with a dead dashboard.
+6. Stamps `/var/lib/dns-dashboard/version.json` with the new commit
+   metadata so the UI immediately reflects the new version.
+
+Typical run is 10–20 seconds. You can re-run it any time — it's
+idempotent.
+
+### Following a feature branch
+
+By default Guardium tracks `main`. If you want to ride a feature branch
+(for example, to test the in-progress UniFi integration), set
+`UPDATE_CHANNEL` in `/etc/dns-dashboard.env` and restart the service:
+
+```bash
+sudo sed -i 's/^UPDATE_CHANNEL=.*/UPDATE_CHANNEL=feat\/unifi-integration/' /etc/dns-dashboard.env
+sudo systemctl restart dns-dashboard
+sudo guardium-update
+```
+
+The next poller tick will compare your installed commit against the
+tip of that branch, and the badge / modal will reflect it.
+
+To go back to stable, set `UPDATE_CHANNEL=main`, restart, and run
+`guardium-update` again.
+
+### What does *not* auto-update
+
+- **Block-list contents.** StevenBlack and friends are fetched by
+  Technitium on its own daily schedule, not by Guardium. Hit **Update
+  Now** in the Advanced Blocking app config if you want them refreshed
+  immediately.
+- **Database schema.** Major schema changes between commits may still
+  require deleting `/var/lib/dns-dashboard/dashboard.db` and starting
+  fresh. The plan is to add real migrations once the schema stabilises;
+  for now, see [`CHANGELOG.md`](CHANGELOG.md) for any breaking
+  notes per release.
+- **Technitium itself.** Guardium never touches the Technitium service
+  unit, binaries, or version. Upgrade Technitium with its own
+  installer (or the community-scripts helper, on Proxmox).
+
+---
+
 ## Configuration
 
 Everything tunable lives in `/etc/dns-dashboard.env` (read at service
@@ -629,6 +736,8 @@ Technitium.
 | `DASHBOARD_DATA_DIR` | `/var/lib/dns-dashboard` | SQLite + Fernet key location. |
 | `DASHBOARD_WEB_DIR` | `/opt/dns-dashboard/web` | Static asset directory. |
 | `LAN_DNS_RESOLVERS` | *(auto)* | Override LAN gateway used for PTR lookups (defaults to system default route). |
+| `GITHUB_REPO` | `adzza/guardium-dns` | Source repo the update CLI and version poller talk to. |
+| `UPDATE_CHANNEL` | `main` | Branch (or tag) the dashboard tracks for update notifications and `guardium-update` pulls. Set to e.g. `feat/unifi-integration` to follow a feature branch. |
 
 Router credentials are **not** stored in the env file; they go through the
 **Settings → Router** UI and are encrypted at rest with a Fernet key
@@ -674,8 +783,11 @@ generated on first boot at `/var/lib/dns-dashboard/secret.key`.
   hand for now.
 - **No HA/clustering.** Single process, single SQLite file, single host.
   This is a household tool, not a service.
-- **No automated upgrades or migrations** yet. Backups are your problem.
-  Schema changes between commits may require deleting `dashboard.db`.
+- **No automated database migrations** yet. `guardium-update` handles
+  code, deps, and service-restart with auto-rollback, but schema
+  changes between commits may still require deleting `dashboard.db`
+  manually. Check [`CHANGELOG.md`](CHANGELOG.md) before pulling a
+  major version. Backups are your problem.
 - **Per-IP, not per-user.** Two people sharing a laptop share a profile.
   "People" grouping helps but it's still device-scoped underneath.
 - **TLS termination not bundled.** Put it behind a reverse proxy if you
@@ -704,6 +816,7 @@ guardium-dns/
 │   ├── fingerprint.py    DNS-query-pattern device-type rules
 │   ├── store.py          SQLite store
 │   ├── vault.py          Fernet-encrypted secrets store
+│   ├── version.py        Installed-version detection + GitHub update poller
 │   └── requirements.txt
 ├── web/
 │   ├── index.html        Dashboard UI (Alpine.js SPA)
@@ -714,6 +827,7 @@ guardium-dns/
 ├── deploy/
 │   ├── dns-dashboard.service
 │   ├── install.sh
+│   ├── guardium-update.sh   Installed to /usr/local/bin/guardium-update
 │   └── setup-reverse-forwarder.sh
 ├── scripts/
 │   ├── identify_all_devices.py
@@ -721,6 +835,8 @@ guardium-dns/
 ├── tests/
 │   └── test_mac_anchored.py
 ├── deploy.sh             Push to remote + run install.sh
+├── VERSION               Tracked SemVer (paired with git SHA at runtime)
+├── CHANGELOG.md          Per-release notes
 ├── LICENSE               MIT
 └── README.md
 ```

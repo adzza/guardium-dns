@@ -42,7 +42,7 @@ apt_install_if_missing() {
   fi
 }
 
-apt_install_if_missing python3 python3-venv python3-pip ca-certificates
+apt_install_if_missing python3 python3-venv python3-pip ca-certificates git curl
 
 if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
   echo "==> creating system user ${SERVICE_USER}"
@@ -73,11 +73,28 @@ DASHBOARD_PORT=8080
 DASHBOARD_DATA_DIR=$DATA_DIR
 DASHBOARD_WEB_DIR=$INSTALL_DIR/web
 TECHNITIUM_SERVICE_TOKEN=${DEFAULT_TOKEN}
+
+# Which GitHub branch the dashboard checks for updates against, and where
+# 'guardium-update' pulls from. Override either of these to ride a beta
+# channel or a fork. Default: stable.
+UPDATE_CHANNEL=main
+GITHUB_REPO=adzza/guardium-dns
 EOF
   chmod 600 "$ENV_FILE"
   chown root:"$SERVICE_USER" "$ENV_FILE"
   chmod 640 "$ENV_FILE"
+else
+  # Backfill missing keys on upgrade installs so older env files pick up
+  # the new update-channel knobs without manual editing.
+  if ! grep -q '^UPDATE_CHANNEL=' "$ENV_FILE"; then
+    echo "==> appending UPDATE_CHANNEL to $ENV_FILE"
+    printf '\n# Update channel + source repo (added by installer).\nUPDATE_CHANNEL=main\nGITHUB_REPO=adzza/guardium-dns\n' >>"$ENV_FILE"
+  fi
 fi
+
+# Install the updater CLI (idempotent symlink overwrite).
+echo "==> installing /usr/local/bin/guardium-update"
+install -m 755 "$INSTALL_DIR/deploy/guardium-update.sh" /usr/local/bin/guardium-update
 
 # systemd
 echo "==> installing systemd unit"
