@@ -96,6 +96,23 @@ window.dashboard = function () {
     personDrawer: {open: false, person: null},
     personEditor: {open: false, id: null, name: '', avatar: '🧒',
                     color: 'indigo', baseProfileId: null},
+    // Canonical schedule presets. Single source of truth: the preset
+    // chips in the person drawer render from this list, the click
+    // handlers find existing rows by matching ``name`` exactly, and
+    // ``addSchedulePreset`` POSTs the preset's fields verbatim.
+    schedulePresets: [
+      {kind: 'bedtime',      icon: '🌙', label: 'Bedtime',       sub: '9pm-7am',
+       name: 'Bedtime',       weekdayMask: 0x7F, startMin: 21*60,    endMin: 7*60,  profileId: null},
+      {kind: 'beforeSchool', icon: '🌅', label: 'Before school', sub: '6-9am',
+       name: 'Before school', weekdayMask: 0x1F, startMin: 6*60,     endMin: 9*60,  profileId: null},
+      {kind: 'school',       icon: '📚', label: 'School hours',  sub: '9am-3pm · no streaming',
+       name: 'School hours',  weekdayMask: 0x1F, startMin: 9*60,     endMin: 15*60, profileId: 'no-streaming'},
+      {kind: 'afterSchool',  icon: '🎒', label: 'After school',  sub: '3:30-9pm',
+       name: 'After school',  weekdayMask: 0x1F, startMin: 15*60+30, endMin: 21*60, profileId: null},
+      {kind: 'dinner',       icon: '🍝', label: 'Dinner',        sub: '6-7pm',
+       name: 'Dinner',        weekdayMask: 0x7F, startMin: 18*60,    endMin: 19*60, profileId: null},
+    ],
+
     scheduleDrawer: {open: false, id: null, targetKind: 'person', targetId: null,
                       name: '', weekdayMask: 0x7F, startMin: 21*60, endMin: 7*60,
                       profileId: null, enabled: true},
@@ -963,20 +980,43 @@ window.dashboard = function () {
       } catch (e) { this.error = e.message; }
     },
 
+    // Preset state -- "is there already a schedule on this person with
+    // the preset's canonical name, and is it currently enabled?" Used
+    // by the chip row in the person drawer to draw the tick badge and
+    // pick the right click handler.
+    schedulePresetState(person, kind) {
+      const def = this.schedulePresets.find(p => p.kind === kind);
+      if (!def || !person) return {exists: false, enabled: false, schedule: null};
+      const match = (person.schedules || []).find(s => (s.name || '') === def.name);
+      if (!match) return {exists: false, enabled: false, schedule: null};
+      return {exists: true, enabled: !!match.enabled, schedule: match};
+    },
+
+    // Click handler for the preset chips. Idempotent: if the preset
+    // is already saved for this person, toggling re-enables a
+    // previously-disabled row or disables an enabled one (mirroring
+    // the green pill toggle in the row list below). If the preset
+    // doesn't exist yet, create it and enable it.
+    async togglePresetSchedule(person, kind) {
+      const st = this.schedulePresetState(person, kind);
+      if (st.exists) {
+        return this.toggleSchedule(st.schedule);
+      }
+      return this.addSchedulePreset(person, kind);
+    },
+
     async addSchedulePreset(person, kind) {
-      const presets = {
-        bedtime:      {name: 'Bedtime',       weekdayMask: 0x7F, startMin: 21*60,    endMin: 7*60,  profileId: null},
-        school:       {name: 'School hours',  weekdayMask: 0x1F, startMin: 9*60,     endMin: 15*60, profileId: 'no-streaming'},
-        beforeSchool: {name: 'Before school', weekdayMask: 0x1F, startMin: 6*60,     endMin: 9*60,  profileId: null},
-        afterSchool:  {name: 'After school',  weekdayMask: 0x1F, startMin: 15*60+30, endMin: 21*60, profileId: null},
-        dinner:       {name: 'Dinner',        weekdayMask: 0x7F, startMin: 18*60,    endMin: 19*60, profileId: null},
-      };
-      const preset = presets[kind];
+      const preset = this.schedulePresets.find(p => p.kind === kind);
       if (!preset) return;
       try {
         await this.api('/api/schedules', {method:'POST', body: JSON.stringify({
           targetKind: 'person', targetId: String(person.id),
-          ...preset, enabled: true,
+          name: preset.name,
+          weekdayMask: preset.weekdayMask,
+          startMin: preset.startMin,
+          endMin: preset.endMin,
+          profileId: preset.profileId,
+          enabled: true,
         })});
         await this.refresh({silent:true});
       } catch (e) { this.error = e.message; }

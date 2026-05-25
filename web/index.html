@@ -1426,6 +1426,59 @@
                 + New schedule
               </button>
             </div>
+
+            <!-- Scope indicator: a schedule attached to a person only fires on
+                 devices linked to that person. Surface this prominently so
+                 parents never wonder why a schedule "did nothing". -->
+            <div x-show="personDrawer.person.schedules && personDrawer.person.schedules.length"
+                 class="mb-2 rounded-xl ring-1 px-3 py-2 flex items-start gap-2 text-[12px]"
+                 :class="(personDrawer.person.deviceCount || 0) > 0
+                          ? 'ring-emerald-400/30 bg-emerald-500/5 text-emerald-100'
+                          : 'ring-amber-400/40 bg-amber-500/10 text-amber-100'">
+              <svg x-show="(personDrawer.person.deviceCount || 0) > 0" class="w-4 h-4 flex-none mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+              </svg>
+              <svg x-show="(personDrawer.person.deviceCount || 0) === 0" class="w-4 h-4 flex-none mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M4.93 19h14.14c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.2 16c-.77 1.33.19 3 1.73 3z"/>
+              </svg>
+              <div class="leading-snug">
+                <template x-if="(personDrawer.person.deviceCount || 0) > 0">
+                  <span>
+                    Applies to <span class="font-semibold" x-text="personDrawer.person.deviceCount"></span>
+                    device<span x-show="personDrawer.person.deviceCount !== 1">s</span>
+                    assigned to <span class="font-semibold" x-text="personDrawer.person.name"></span>.
+                  </span>
+                </template>
+                <template x-if="(personDrawer.person.deviceCount || 0) === 0">
+                  <span>
+                    <span class="font-semibold">These schedules won't do anything yet.</span>
+                    Assign at least one device to
+                    <span class="font-semibold" x-text="personDrawer.person.name"></span>
+                    under <span class="text-amber-200/80">Devices</span> above — schedules attached to a person
+                    only apply to that person's devices.
+                  </span>
+                </template>
+              </div>
+            </div>
+
+            <!-- "Active right now" callout: reinforces that schedules are being enforced
+                 in real time, and tells the parent which one is firing this minute. -->
+            <template x-if="activeScheduleFor(personDrawer.person)">
+              <div class="mb-2 rounded-xl ring-1 ring-amber-400/30 bg-amber-500/10 px-3 py-2 flex items-center gap-2 text-[12px] text-amber-100">
+                <svg class="w-4 h-4 flex-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <span class="font-medium" x-text="activeScheduleFor(personDrawer.person).name || 'Schedule'"></span>
+                <span class="text-amber-200/70" x-text="'enforcing now · until ' + formatHM(activeScheduleFor(personDrawer.person).endMin)"></span>
+              </div>
+            </template>
+
+            <p class="text-[11px] text-slate-500 mb-2 leading-relaxed">
+              Stack as many schedules as you like — they all run side-by-side. If two
+              overlap at the same minute, the most recently added one wins.
+              <span class="text-slate-400">Tap a preset to add it; tap again to disable.</span>
+            </p>
+
             <div class="rounded-xl ring-1 ring-white/5 bg-slate-900/60 divide-y divide-white/5" x-show="personDrawer.person.schedules && personDrawer.person.schedules.length">
               <template x-for="s in personDrawer.person.schedules" :key="'sc-'+s.id">
                 <div class="flex items-center gap-3 px-3 py-2.5">
@@ -1435,7 +1488,14 @@
                     <span :class="s.enabled ? 'translate-x-4' : 'translate-x-0'" class="block w-4 h-4 rounded-full bg-white transition-transform"></span>
                   </button>
                   <div class="flex-1 min-w-0">
-                    <div class="text-sm font-medium" x-text="s.name || 'Schedule'"></div>
+                    <div class="flex items-center gap-1.5">
+                      <span class="text-sm font-medium" x-text="s.name || 'Schedule'"></span>
+                      <!-- "Active right now" pip on the matching row. -->
+                      <span x-show="activeScheduleFor(personDrawer.person) && activeScheduleFor(personDrawer.person).id === s.id"
+                            class="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-200 ring-1 ring-amber-400/30">
+                        active
+                      </span>
+                    </div>
                     <div class="text-[11px] text-slate-400" x-text="weekdayLabel(s.weekdayMask) + ' · ' + formatHM(s.startMin) + ' to ' + formatHM(s.endMin) + ' · ' + (profileLabel(s.profileId) || 'Internet off')"></div>
                   </div>
                   <button @click="openScheduleEditor(s, 'person', personDrawer.person.id)" class="text-[11px] text-slate-400 hover:text-slate-200">Edit</button>
@@ -1444,14 +1504,42 @@
               </template>
             </div>
             <div x-show="!personDrawer.person.schedules || !personDrawer.person.schedules.length" class="text-sm text-slate-500 italic">
-              No schedules yet. Use a preset or "+ New schedule".
+              No schedules yet. Pick one or more presets below, or use "+ New schedule".
             </div>
+
+            <!-- Preset chips. Each one renders its own enabled-state badge so the
+                 parent can tell at a glance which presets are already in play. -->
             <div class="flex flex-wrap gap-2 mt-2">
-              <button @click="addSchedulePreset(personDrawer.person, 'bedtime')" class="text-[11px] px-2 py-1 rounded-lg bg-slate-800/70 ring-1 ring-white/5 hover:bg-slate-700/70">🌙 Bedtime 9pm-7am</button>
-              <button @click="addSchedulePreset(personDrawer.person, 'beforeSchool')" class="text-[11px] px-2 py-1 rounded-lg bg-slate-800/70 ring-1 ring-white/5 hover:bg-slate-700/70">🌅 Before school 6-9am</button>
-              <button @click="addSchedulePreset(personDrawer.person, 'school')" class="text-[11px] px-2 py-1 rounded-lg bg-slate-800/70 ring-1 ring-white/5 hover:bg-slate-700/70">📚 School hours</button>
-              <button @click="addSchedulePreset(personDrawer.person, 'afterSchool')" class="text-[11px] px-2 py-1 rounded-lg bg-slate-800/70 ring-1 ring-white/5 hover:bg-slate-700/70">🎒 After school 3:30-9pm</button>
-              <button @click="addSchedulePreset(personDrawer.person, 'dinner')" class="text-[11px] px-2 py-1 rounded-lg bg-slate-800/70 ring-1 ring-white/5 hover:bg-slate-700/70">🍝 Dinner 6-7pm</button>
+              <template x-for="preset in schedulePresets" :key="'pre-'+preset.kind">
+                <button @click="togglePresetSchedule(personDrawer.person, preset.kind)"
+                        :class="(() => {
+                          const st = schedulePresetState(personDrawer.person, preset.kind);
+                          if (st.exists && st.enabled)  return 'bg-emerald-500/15 ring-emerald-400/40 text-emerald-100 hover:bg-emerald-500/25';
+                          if (st.exists && !st.enabled) return 'bg-slate-800/40 ring-white/10 text-slate-400 hover:bg-slate-700/60';
+                          return 'bg-slate-800/70 ring-white/5 text-slate-200 hover:bg-slate-700/70';
+                        })()"
+                        :title="(() => {
+                          const st = schedulePresetState(personDrawer.person, preset.kind);
+                          if (st.exists && st.enabled)  return 'Already added — click to disable';
+                          if (st.exists && !st.enabled) return 'Saved but disabled — click to re-enable';
+                          return 'Click to add this preset';
+                        })()"
+                        class="inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-lg ring-1 transition-colors">
+                  <span x-text="preset.icon"></span>
+                  <span><span x-text="preset.label"></span><span class="text-slate-400/70 ml-1" x-text="preset.sub"></span></span>
+                  <!-- Tick badge: green when added+enabled, muted when added+disabled, absent when not yet added. -->
+                  <template x-if="schedulePresetState(personDrawer.person, preset.kind).exists">
+                    <span :class="schedulePresetState(personDrawer.person, preset.kind).enabled
+                            ? 'bg-emerald-400/90 text-emerald-950 ring-emerald-300/40'
+                            : 'bg-slate-700 text-slate-400 ring-white/5'"
+                          class="ml-0.5 inline-flex items-center justify-center w-3.5 h-3.5 rounded-full ring-1">
+                      <svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 12l5 5L20 7"/>
+                      </svg>
+                    </span>
+                  </template>
+                </button>
+              </template>
             </div>
           </section>
 
