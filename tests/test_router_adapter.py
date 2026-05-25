@@ -303,6 +303,20 @@ class RegistryAutoMigrationTests(unittest.TestCase):
         # Default env -- alpha flag not set -- must refuse.
         self.assertIsNone(get_adapter(self.store, _FakeSecrets()))
 
+    def test_explicit_none_overrides_legacy_auto_detect(self) -> None:
+        """User picks 'None' in Settings while ASUS creds are still
+        saved (e.g. mid-switch from ASUS to UniFi). The registry must
+        honour the explicit opt-out rather than silently re-promoting
+        back to ASUS via the legacy auto-detect.
+        """
+        self.store.set_setting("router.vendor", "none")
+        self.store.set_setting("router.asus.host", "192.168.1.1")
+        from server.routers.registry import get_adapter
+        self.assertIsNone(get_adapter(self.store, _FakeSecrets()))
+        # And the setting wasn't clobbered back to 'asus' as a side
+        # effect of the read.
+        self.assertEqual(self.store.get_setting("router.vendor"), "none")
+
     def test_unifi_loaded_when_alpha_flag_set(self) -> None:
         """When the alpha flag IS set and UniFi creds are saved, the
         registry must return a real UnifiAdapter instance.

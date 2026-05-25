@@ -30,13 +30,20 @@ _VALID_VENDORS = {"asus", "unifi"}
 def _resolve_vendor(store: Any) -> str | None:
     """Return the active vendor id, honouring the legacy auto-detect.
 
-    Side effect: if no ``router.vendor`` is saved but ``router.asus.host``
+    The ``"none"`` value is treated as an explicit opt-out and is NOT
+    overridden by the legacy auto-detect, so a user who deliberately
+    picked "None" in Settings keeps that choice even if they still
+    have stale ASUS credentials saved.
+
+    Side effect: when no value is saved at all and ``router.asus.host``
     is, persists ``router.vendor = "asus"`` so subsequent reads are
     explicit.
     """
     vendor = (store.get_setting(VENDOR_SETTING_KEY) or "").strip().lower()
     if vendor in _VALID_VENDORS:
         return vendor
+    if vendor == "none":
+        return None
     if not vendor and store.get_setting("router.asus.host"):
         store.set_setting(VENDOR_SETTING_KEY, "asus")
         log.info("router vendor auto-migrated to 'asus' (legacy install)")
