@@ -281,6 +281,46 @@ Both run automatically in the background (≤5 devices/min), and you can
 force-refresh a single device with the in-row identify button. Helps
 enormously when a device shows up with a randomized MAC and no hostname.
 
+### Defence in depth — the four-layer blocking model
+
+Guardium does its filtering in **four stacked layers**, each one closing a
+class of bypass that the layer above can't reach. You can run with just
+Layer 0 and most well-behaved devices stay blocked; the router layers
+exist for the devices that actively try to escape.
+
+| Layer | Where it runs | Mechanism on the wire | Defeats |
+|---|---|---|---|
+| **0. DNS sinkhole** | Technitium DNS server (always on) | Returns `0.0.0.0` / `::` (never `NXDOMAIN`) for blocked domains and the 25-hostname DoH-bootstrap set | Cooperative clients; stops iOS Private Relay, Chrome Secure DNS, Firefox DoH, Android Private DNS, and the MS Office private resolver from activating in the first place |
+| **1. MAC kill switch** | ASUS router (HTTP / NVRAM) | Built-in MAC filter (`MULTIFILTER_*`) refuses to forward *any* IP packet from listed MACs | A device that ignores every form of DNS entirely |
+| **2. DNS Director** | ASUS router (HTTP / NVRAM) | Per-MAC iptables `DNAT` on `PREROUTING` rewrites UDP/53 + TCP/53 destinations to point at Technitium | A device that hard-codes plaintext DNS (e.g. `8.8.8.8:53`) |
+| **3. DoH IP blocklist** | ASUS router (SSH / iptables + ipset) | `DROP` outbound TCP/443 (DoH) and TCP/853 (DoT) from listed MACs to a curated set of provider IPs — Google, Cloudflare, Quad9, NextDNS, AdGuard, Mullvad… | A device that hard-codes a DoH or DoT endpoint by **IP** (e.g. Google TVs hitting `8.8.8.8:443` directly) |
+
+A few mechanics worth understanding because they recur in the stage
+details below:
+
+- **Why `0.0.0.0`, not `NXDOMAIN`.** Many clients treat `NXDOMAIN` as
+  *"this resolver doesn't know"* and silently retry against a hard-coded
+  fallback resolver — typically a public one — which would defeat
+  every layer above. A `0.0.0.0` reply looks like a successful
+  resolution that just happens to go nowhere, so the client stays
+  bound to Technitium and the next query also goes through us.
+- **Why Layer 3 has to drop the SYN, not RST it.** A TCP RST tells the
+  client *"this connection is refused, try another path"*. A silent
+  drop just looks like the destination is unreachable; after a
+  couple of timeouts most DoH-fallback state machines give up and
+  revert to the network's configured DNS — which is Technitium.
+- **Layers 1+2 live in NVRAM**, so they survive router reboot on
+  their own. Layer 3 (iptables / ipset) is RAM-only on AsusWRT, so
+  the reconciler re-asserts the chain on every 60-second tick.
+- **Everything Guardium adds to the router is name-scoped** —
+  dedicated NVRAM list entries (Layers 1+2) or a dedicated
+  `DNSDASH_DOH` iptables chain referencing a `dnsdash_doh` ipset
+  (Layer 3). Manual router config is never touched, and disabling a
+  stage triggers a clean teardown on the next reconciler tick.
+
+The Layer-0 sinkhole is unconditional and free. Layers 1–3 below are
+optional and require router integration.
+
 ### Router integration — three stages
 
 DNS-level blocking is great. It is also **trivially bypassed** by any device
@@ -313,10 +353,26 @@ block list; the device cannot send *any* IP traffic, not just DNS.
 
 #### Stage 2 — DNS Director per MAC (HTTP)
 
-Uses **DNS Director** (`dnsfilter_*` NVRAM keys) to transparently rewrite
-every port-53 packet from a specific MAC to point at Technitium, even if
-the device hard-codes `8.8.8.8` or `1.1.1.1`. Devices on any profile other
-than `unrestricted` get steered into the dashboard's filter automatically.
+Uses **DNS Director** (`dnsfilter_*` NVRAM keys) — ASUS's name for
+per-MAC DNS NAT. Mechanically, it installs an iptables `DNAT` rule on
+the router's `PREROUTING` chain that says:
+
+> *"If the source MAC is in this list, rewrite the destination of any
+> UDP/53 or TCP/53 packet to point at Technitium."*
+
+So a smart TV that hard-codes `8.8.8.8` as its DNS server sends a
+query to `8.8.8.8:53`, the router intercepts it on the way out and
+rewrites it to `<technitium-ip>:53`. The device never knows — reply
+traffic is un-NAT'd on the way back so the source IP looks like
+`8.8.8.8`, keeping the client happy — but in reality every query
+went through Technitium and obeyed the device's profile.
+
+Devices on any profile other than `unrestricted` get steered into the
+dashboard's filter automatically.
+
+This **only catches plaintext DNS**. DoH (TCP/443) and DoT (TCP/853)
+travel on different ports and look like ordinary HTTPS to the router;
+that's Stage 3's job.
 
 - **Defeats:** hard-coded plain-DNS (UDP/TCP port 53) bypass.
 - **Survives router reboot:** yes (NVRAM-persistent).
@@ -330,25 +386,34 @@ This is the one that beat the TCL Google TV.
 >
 > Several Google-branded smart TVs (TCL, Sony, Hisense Google TVs;
 > Chromecast with Google TV) **silently fall back to DNS-over-HTTPS
-> against `dns.google` and `dns64.dns.google`** when their configured DNS
-> can't satisfy them. They make outbound HTTPS to `8.8.8.8:443` /
-> `8.8.4.4:443` and bypass everything in the DNS layer — including DoH
-> hostname sinkholing, because they use the IP directly.
+> against `dns.google` and `dns64.dns.google`** the moment their
+> configured DNS looks unhappy — a single dropped packet, a blocked
+> answer, sometimes just elevated latency. Critically, they don't
+> resolve `dns.google` to find Google's DoH server: they **hard-code
+> the IP** and open TCP/443 straight to `8.8.8.8` / `8.8.4.4`. That
+> defeats every DNS-layer defence above, including DoH hostname
+> sinkholing.
 >
-> Stage 3 fixes this by SSHing into the router (Dropbear) and:
+> Stage 3 attacks the problem at the IP layer. The dashboard SSHes
+> into the router (Dropbear) and:
 >
-> 1. creating an `ipset` (`dnsdash_doh`) populated with the IPv4/IPv6
->    addresses of known DoH endpoints (Google, Cloudflare, Quad9, NextDNS,
->    AdGuard, Mullvad, etc.),
-> 2. installing iptables rules in a dedicated chain (`DNSDASH_DOH`) that
->    drop outbound TCP/443 (and TCP/853 for DoT) to any IP in the set,
->    scoped to the MACs of devices on a restricted profile.
+> 1. creates a kernel `ipset` (`dnsdash_doh`, type `hash:ip`)
+>    populated with the IPv4 and IPv6 addresses of known DoH/DoT
+>    endpoints — Google, Cloudflare, Quad9, NextDNS, AdGuard,
+>    Mullvad, and friends;
+> 2. creates a dedicated iptables chain (`DNSDASH_DOH`) hooked from
+>    `FORWARD`, containing rules that **silently `DROP`** outbound
+>    TCP/443 (DoH) and TCP/853 (DoT) **from listed MACs** to any IP
+>    in the set.
 >
-> Result: the Google TVs queries `dns.google` for an `A` record, succeeds
-> (because the DNS resolution itself isn't blocked), opens a TCP/443 to
-> `8.8.8.8`, and the router silently drops the SYN. The TV falls back to
-> the configured DNS — which is now Technitium, which now blocks YouTube
-> for the `no-youtube` profile. Mission accomplished.
+> Result: the Google TV opens `tcp://8.8.8.8:443`, the SYN reaches
+> the router, matches MAC + dest-in-set + dport-443, and is
+> **silently dropped — no RST**. The TV's TCP stack sees a timeout,
+> not a refusal, so it doesn't try a different DoH path; after a
+> couple of timeouts its DoH fallback logic gives up and it reverts
+> to plaintext DNS against its configured server, which is
+> Technitium. Technitium then enforces the `no-youtube` profile and
+> YouTube stays blocked. Mission accomplished.
 
 - **Defeats:** DNS-over-HTTPS bypass to known providers.
 - **Survives router reboot:** rules need to be re-applied (the reconciler
@@ -356,6 +421,54 @@ This is the one that beat the TCL Google TV.
 - **Requires:** SSH access to the router with `iptables` + `ipset` + the
   `xt_set` kernel module. The dashboard probes for this on first run and
   reports back if the firmware doesn't have what it needs.
+
+### Walking through it — blocking YouTube on a Google TV
+
+The TCL Google TV in the author's living room is what motivated most
+of the router-integration work. Here's exactly what happens, packet
+by packet, when it's set to the `no-youtube` profile with all four
+layers enabled:
+
+1. **TV asks for `youtube.com` over plaintext DNS** using the resolver
+   DHCP handed it — Technitium. Technitium's `no-youtube` group
+   contains `youtube.com` and ~12 friends and answers `0.0.0.0`.
+   YouTube doesn't load. **Layer 0 wins.**
+2. **TV decides Technitium is "broken" and queries `8.8.8.8:53`
+   directly**, ignoring DHCP. The router's `PREROUTING` chain sees
+   the packet, matches the TV's MAC, and `DNAT`s the destination to
+   Technitium. Technitium answers `0.0.0.0` again. **Layer 2 wins.**
+   From the TV's logs it looks like Google DNS itself blocked YouTube.
+3. **TV gives up on plaintext DNS and falls back to
+   `tcp://8.8.8.8:443` (DoH).** The router's `FORWARD` chain jumps
+   into `DNSDASH_DOH`, matches MAC + destination IP in
+   `dnsdash_doh` + dport 443, and silently drops the SYN. The TV's
+   TCP stack times out — no RST, no ICMP-unreachable, just silence.
+   **Layer 3 wins.**
+4. **TV's DoH fallback logic gives up** after a couple of timeouts
+   and reverts to plaintext DNS against its configured resolver,
+   which is Technitium. Loop back to step 1. The TV is now stuck on
+   Technitium and YouTube stays blocked indefinitely.
+
+If you flip the profile back to `unrestricted`, the same packets
+flow but the answers change:
+
+- Layer 0 lets YouTube domains resolve normally.
+- Layer 2 still NAT-rewrites port 53 to Technitium, but Technitium
+  now answers truthfully.
+- Layer 3 still drops TCP/443 to `8.8.8.8`, but the TV no longer
+  needs DoH because plaintext DNS is succeeding, so the drop never
+  fires.
+
+YouTube comes back **instantly** — no router state changes, no TV
+reboot needed. The reconciler's next 60s tick updates the router's
+per-MAC steering and the device transitions cleanly.
+
+**Layer 1 (MAC kill switch)** isn't used in this scenario — it's
+held in reserve for the `internet-off` profile, where the goal is
+*"no traffic at all"* rather than *"all traffic, but YouTube
+broken"*. If the same TV gets put on `internet-off`, the router
+refuses to forward any packet from its MAC, and steps 1-3 above
+never even happen.
 
 ---
 
