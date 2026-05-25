@@ -97,6 +97,7 @@ from .sampler import Sampler
 from .store import Store
 from .technitium import TechnitiumClient, TechnitiumConfig, TechnitiumError
 from .vault import SecretStore
+from . import version as ver
 
 
 log = logging.getLogger("dns-dashboard")
@@ -293,6 +294,12 @@ async def lifespan(app: FastAPI):
         log.warning("TECHNITIUM_SERVICE_TOKEN not set; reconciler & sampler disabled. "
                     "Schedules/quotas/family-pause will not fire automatically.")
 
+    # Version checker is independent of the Technitium token -- it only
+    # talks to GitHub and the local store, so we want it to run even on
+    # boxes where the user hasn't finished setup yet.
+    app.state.version_checker = ver.VersionChecker(store)
+    await app.state.version_checker.start()
+
     try:
         yield
     finally:
@@ -300,6 +307,8 @@ async def lifespan(app: FastAPI):
             await app.state.reconciler.stop()
         if app.state.sampler is not None:
             await app.state.sampler.stop()
+        if getattr(app.state, "version_checker", None) is not None:
+            await app.state.version_checker.stop()
         await app.state.service_client.aclose()
 
 
@@ -2042,6 +2051,40 @@ async def api_audit(_: str = Depends(require_token)) -> dict[str, Any]:
 @app.get("/api/health")
 async def api_health() -> dict[str, Any]:
     return {"ok": True, "service": "dns-dashboard"}
+
+
+# ---- routes: version / updates ---------------------------------------------
+
+@app.get("/api/version")
+async def api_version(_: str = Depends(require_token)) -> dict[str, Any]:
+    """Installed + latest version info. Cheap: pure DB read, no network."""
+    return ver.build_payload(store)
+
+
+@app.post("/api/version/check")
+async def api_version_check(_: str = Depends(require_token)) -> dict[str, Any]:
+    """Force an immediate GitHub poll. Used by the 'Check now' button."""
+    checker = getattr(app.state, "version_checker", None)
+    if checker is None:
+        return ver.build_payload(store)
+    return await checker.check_now()
+
+
+class UpdateDismissPayload(BaseModel):
+    sha: str | None = None
+
+
+@app.post("/api/version/dismiss")
+async def api_version_dismiss(
+    payload: UpdateDismissPayload,
+    actor: str = Depends(get_actor),
+    _: str = Depends(require_token),
+) -> dict[str, Any]:
+    """Suppress the update banner for the given SHA (returns when a newer one lands)."""
+    ver.set_dismissed_sha(store, payload.sha)
+    store.log_audit(actor=actor, ip=None, action="update-banner-dismiss",
+                     detail=payload.sha or "cleared")
+    return ver.build_payload(store)
 
 
 @app.get("/api/diagnostics/reconcile")

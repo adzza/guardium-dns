@@ -85,6 +85,11 @@ window.dashboard = function () {
     serverTime: null,
     today: '',
 
+    versionInfo: null,
+    updateModalOpen: false,
+    checkingVersion: false,
+    copiedKey: null,
+
     mainChartData: null,
     mainChart: null,
 
@@ -173,7 +178,12 @@ window.dashboard = function () {
       } catch (e) {
         this.error = e.message || String(e);
       }
+      this.loadVersion().catch(() => {});
       setInterval(() => this.refresh({silent: true}), 30000);
+      // Version data changes slowly (poll cadence 6h on the server) but
+      // we still refresh every 5 min so the chip's "last checked" label
+      // stays honest after long idle sessions.
+      setInterval(() => this.loadVersion().catch(() => {}), 5 * 60 * 1000);
     },
 
     setView(v) {
@@ -533,6 +543,120 @@ window.dashboard = function () {
       if (!epoch) return '0m';
       const now = Math.floor(Date.now() / 1000);
       return this.formatMinutes(Math.max(0, Math.floor((epoch - now) / 60)));
+    },
+
+    // Relative-time formatter for the version chip / banner. Accepts a
+    // Unix epoch (seconds) and returns "just now" / "3 min ago" / etc.
+    formatRelative(epoch) {
+      if (!epoch) return '';
+      const now = Math.floor(Date.now() / 1000);
+      const diff = now - epoch;
+      if (diff < 0)     return 'just now';
+      if (diff < 30)    return 'just now';
+      if (diff < 60)    return diff + 's ago';
+      if (diff < 3600)  return Math.floor(diff / 60) + ' min ago';
+      if (diff < 86400) return Math.floor(diff / 3600) + ' h ago';
+      if (diff < 604800)return Math.floor(diff / 86400) + ' d ago';
+      try {
+        return new Date(epoch * 1000).toLocaleDateString();
+      } catch { return ''; }
+    },
+
+    // ---------------------------------------------------- version + updates
+
+    async loadVersion() {
+      try {
+        const v = await this.api('/api/version');
+        this.versionInfo = v;
+      } catch (e) {
+        // Don't surface as a top-level error -- the chip itself will
+        // show the last-known state and any error string.
+      }
+    },
+
+    async checkForUpdates() {
+      if (this.checkingVersion) return;
+      this.checkingVersion = true;
+      try {
+        const v = await this.api('/api/version/check', {method: 'POST'});
+        this.versionInfo = v;
+      } catch (e) {
+        this.error = e.message || String(e);
+      } finally {
+        this.checkingVersion = false;
+      }
+    },
+
+    async dismissUpdate() {
+      // Snooze the arrow badge until a *newer* SHA arrives. The version pill
+      // stays in the nav so the user can always reopen this modal.
+      const sha = (this.versionInfo && this.versionInfo.latest && this.versionInfo.latest.sha) || null;
+      if (!sha) return;
+      try {
+        const v = await this.api('/api/version/dismiss', {
+          method: 'POST',
+          body: JSON.stringify({sha}),
+        });
+        this.versionInfo = v;
+      } catch (_) { /* soft */ }
+      this.updateModalOpen = false;
+    },
+
+    openUpdateModal() {
+      this.updateModalOpen = true;
+      this.copiedKey = null;
+      if (!this.versionInfo) this.loadVersion().catch(() => {});
+    },
+
+    versionLabel() {
+      const v = this.versionInfo;
+      if (!v || !v.installed) return 'v?';
+      const inst = v.installed;
+      if (inst.tag && inst.tag !== 'unknown' && /^\d/.test(inst.tag)) return 'v' + inst.tag;
+      if (inst.shortSha) return inst.shortSha;
+      return 'v?';
+    },
+
+    installedTagLabel() {
+      const v = this.versionInfo;
+      if (!v || !v.installed) return 'Unknown';
+      const inst = v.installed;
+      if (inst.tag && inst.tag !== 'unknown') return 'v' + inst.tag;
+      if (inst.branch) return inst.branch;
+      return 'Unknown';
+    },
+
+    installedShaLabel() {
+      const v = this.versionInfo;
+      if (!v || !v.installed) return '';
+      const inst = v.installed;
+      const parts = [];
+      if (inst.shortSha) parts.push(inst.shortSha);
+      if (inst.branch && inst.tag && inst.tag !== 'unknown') parts.push(inst.branch);
+      if (inst.source === 'unknown') parts.push('(version unknown — rsync install)');
+      return parts.join(' · ');
+    },
+
+    async copyToClipboard(text, key) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          // Fallback for older browsers / non-HTTPS contexts.
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        }
+        this.copiedKey = key;
+        setTimeout(() => { if (this.copiedKey === key) this.copiedKey = null; }, 1800);
+      } catch (e) {
+        this.error = 'Could not copy: ' + (e.message || e);
+      }
     },
     formatAnswer(a) {
       if (!a) return '—';
