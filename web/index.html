@@ -1813,8 +1813,19 @@
           </template>
         </div>
       </div>
+
+      <!-- Scope explainer: be loud about what gets paused so parents don't
+           accidentally take down their NAS, smart-home hub, etc. -->
+      <div class="rounded-xl ring-1 ring-emerald-400/20 bg-emerald-500/5 px-3 py-2 text-[12px] text-emerald-100/90 leading-relaxed">
+        Only devices assigned to a person will be paused.
+        <span class="text-emerald-100/70">
+          Servers, smart-home gear, and anything else not linked to someone in the
+          People list stay online by default.
+        </span>
+      </div>
+
       <div>
-        <label class="block text-xs text-slate-400 mb-1.5">Don't pause</label>
+        <label class="block text-xs text-slate-400 mb-1.5">Skip these people (their devices stay online)</label>
         <div class="space-y-1.5 max-h-40 overflow-y-auto">
           <template x-for="p in people" :key="'fpe-'+p.id">
             <label class="flex items-center gap-2 py-1 px-2 rounded hover:bg-white/5 cursor-pointer">
@@ -1826,6 +1837,18 @@
           <div x-show="!people.length" class="text-sm text-slate-500 italic">No people configured.</div>
         </div>
       </div>
+
+      <!-- Opt-in escape hatch for the "kill literally everything" use case. -->
+      <label class="flex items-start gap-2 py-1 px-2 rounded hover:bg-white/5 cursor-pointer">
+        <input type="checkbox" x-model="familyPauseDialog.includeUnassigned" class="mt-0.5 accent-rose-400" />
+        <span class="text-[12px] leading-snug">
+          <span class="text-slate-200 font-medium">Also pause unassigned devices</span>
+          <span class="block text-slate-500">
+            Includes servers, NAS, IoT — anything not linked to a person. Only check this
+            if you really want a whole-network shutdown.
+          </span>
+        </span>
+      </label>
     </div>
     <div class="px-4 sm:px-5 py-3 border-t border-white/5 flex items-center gap-2">
       <div class="flex-1"></div>

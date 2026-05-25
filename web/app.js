@@ -119,7 +119,7 @@ window.dashboard = function () {
     quotaDrawer: {open: false, id: null, targetKind: 'person', targetId: null,
                    weekdayMask: 0x7F, minutesMax: 120,
                    profileWhenExceeded: null, enabled: true},
-    familyPauseDialog: {open: false, minutes: 30, excludePersonIds: []},
+    familyPauseDialog: {open: false, minutes: 30, excludePersonIds: [], includeUnassigned: false},
     assignDrawer: {open: false, device: null},
     diagnose: {open: false, loading: false, ip: null, label: null, data: null},
 
@@ -871,6 +871,7 @@ window.dashboard = function () {
       this.familyPauseDialog.open = true;
       this.familyPauseDialog.minutes = 30;
       this.familyPauseDialog.excludePersonIds = [];
+      this.familyPauseDialog.includeUnassigned = false;
     },
 
     toggleFamilyPauseExclude(pid) {
@@ -887,6 +888,7 @@ window.dashboard = function () {
             minutes: this.familyPauseDialog.minutes,
             profileId: null,
             excludePersonIds: this.familyPauseDialog.excludePersonIds,
+            includeUnassigned: this.familyPauseDialog.includeUnassigned,
             note: 'family pause',
           }),
         });

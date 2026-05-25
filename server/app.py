@@ -674,7 +674,11 @@ async def api_overview(
     favourites = [d for d in devices if d.get("favourite")]
     favourites.sort(key=lambda d: (-(d.get("favOrder") or 0), d["ip"]))
 
-    family_pause = next((o for o in actives if o["target_kind"] == "all"), None)
+    # The family-pause action stamps one override row per device (the
+    # implementation chose per-device rows so exclusions and unassigned-
+    # device skipping can be cleanly expressed). Detect "is family-pause
+    # currently on?" by source, not by target_kind.
+    family_pause = next((o for o in actives if o.get("source") == "family-pause"), None)
 
     return {
         "stats": stats.get("stats", {}),
@@ -1572,6 +1576,12 @@ class FamilyPausePayload(BaseModel):
     profileId: str | None = None
     excludeIps: list[str] = Field(default_factory=list)
     excludePersonIds: list[int] = Field(default_factory=list)
+    # When False (the default), devices that aren't assigned to any person
+    # are LEFT ALONE -- this protects servers, NAS, home automation, the
+    # dashboard's own LXC, etc., which otherwise get caught by "Pause for
+    # dinner" with no easy way to whitelist them. Power users who want a
+    # whole-network kill can flip this to True.
+    includeUnassigned: bool = False
     note: str | None = Field(default=None, max_length=200)
 
 
@@ -1588,10 +1598,14 @@ async def api_family_pause(
     note = payload.note or "family pause"
 
     # Implementation: create one "family-pause" override per non-excluded
-    # device. We don't use target=all because we want clean exclusion semantics.
+    # device. We don't use target=all because we want clean exclusion
+    # semantics (per-person skip, per-IP skip, and "leave unassigned
+    # devices alone" all compose cleanly when each device row decides
+    # for itself whether to stamp an override).
     excluded_ips = set(payload.excludeIps)
     excluded_persons = set(payload.excludePersonIds)
     affected = 0
+    skipped_unassigned = 0
     for d in store.all_devices():
         ip = d["ip"]
         if not _is_valid_ip_or_cidr(ip):
@@ -1600,16 +1614,29 @@ async def api_family_pause(
             continue
         if d.get("person_id") in excluded_persons:
             continue
+        if d.get("person_id") is None and not payload.includeUnassigned:
+            skipped_unassigned += 1
+            continue
         store.add_override(target_kind="device", target_id=ip,
                             profile_id=payload.profileId, source="family-pause",
                             starts_at=now, expires_at=expires,
                             created_by=actor, note=note)
         affected += 1
 
+    audit_detail = f"{payload.minutes}m, {affected} devices"
+    if skipped_unassigned:
+        audit_detail += f", skipped {skipped_unassigned} unassigned"
+    if payload.includeUnassigned:
+        audit_detail += ", incl. unassigned"
     store.log_audit(actor=actor, ip=None, action="family-pause",
-                     detail=f"{payload.minutes}m, {affected} devices")
+                     detail=audit_detail)
     await _kick_reconcile()
-    return {"ok": True, "affected": affected, "expiresAt": expires}
+    return {
+        "ok": True,
+        "affected": affected,
+        "skippedUnassigned": skipped_unassigned,
+        "expiresAt": expires,
+    }
 
 
 @app.post("/api/family/resume")
